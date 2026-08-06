@@ -1,0 +1,6 @@
+{
+  "name": "GRMF Fi",
+  "description": "Professional Decentralized Exchange (DEX) interface for the TON ecosystem and GRMF token, supporting TonConnect and Ston.fi design patterns.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

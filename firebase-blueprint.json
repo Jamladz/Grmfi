@@ -1,0 +1,53 @@
+{
+  "collections": {
+    "users": {
+      "description": "User profiles and aggregate stats",
+      "documents": {
+        "{userId}": {
+          "fields": {
+            "username": "string",
+            "telegramUsername": "string?",
+            "telegramId": "number?",
+            "points": "number",
+            "rank": "number",
+            "inviteCount": "number",
+            "invitedUsers": "array?",
+            "referredBy": "string?",
+            "createdAt": "timestamp",
+            "lastActiveAt": "timestamp?",
+            "lastActiveTimestamp": "number?",
+            "lastCheckIn": "timestamp?",
+            "betaBalances": "map",
+            "realBalances": "map",
+            "openedChests": "string[]"
+          }
+        }
+      }
+    },
+    "userTasks": {
+      "description": "User specific task completion status",
+      "documents": {
+        "{userId}_{taskId}": {
+          "fields": {
+            "userId": "string",
+            "taskId": "string",
+            "isCompleted": "boolean",
+            "completedAt": "timestamp"
+          }
+        }
+      }
+    },
+    "referrals": {
+      "description": "Referral tracking",
+      "documents": {
+        "{referralId}": {
+          "fields": {
+            "referrerId": "string",
+            "referredId": "string",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    }
+  }
+}
