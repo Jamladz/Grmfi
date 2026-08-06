@@ -51,16 +51,11 @@ export const SwapCard: React.FC<SwapCardProps> = ({
   const userBalance = wallet.balances[fromToken.symbol] || 0;
 
   const handleMaxClick = () => {
-    if (userBalance > 0) {
-      setFromAmount(userBalance.toString());
-    } else {
-      setFromAmount('100');
-    }
+    setFromAmount(userBalance.toString());
   };
 
   const handlePercentClick = (percent: number) => {
-    const base = userBalance > 0 ? userBalance : 1000;
-    const calculated = (base * (percent / 100)).toFixed(4);
+    const calculated = (userBalance * (percent / 100)).toFixed(4);
     setFromAmount(calculated);
   };
 
