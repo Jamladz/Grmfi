@@ -27,6 +27,10 @@ import {
   increment
 } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
+import { extractAndStoreReferralCode, processReferral, syncReferralsForUser } from './lib/referrals';
+
+// Immediately capture referral start parameter from Telegram on script load
+extractAndStoreReferralCode();
 
 import { Header } from './components/Header';
 import { SwapCard } from './components/SwapCard';
@@ -112,117 +116,6 @@ function App() {
   const sanitizedTgUsername = rawTgUsername.toLowerCase().replace(/^@/, '').trim();
   const isAdmin = sanitizedTgUsername === 'sekanedr_is' || auth.currentUser?.email === 'sekanedrmessaif@gmail.com';
 
-  const processReferralIfAny = async (user: any, userDocData: any) => {
-    if (!user || userDocData?.hasProcessedReferral || userDocData?.referredBy) return;
-
-    const tg = (window as any).Telegram?.WebApp;
-    const urlParams = new URLSearchParams(window.location.search);
-    const rawParam = tg?.initDataUnsafe?.start_param 
-      || urlParams.get('startapp') 
-      || urlParams.get('tgWebAppStartParam')
-      || urlParams.get('start');
-
-    if (!rawParam) return;
-
-    // Clean ref_tg_1368899842 -> 1368899842
-    const referrerCode = rawParam.replace(/^ref_tg_/, '').replace(/^ref_/, '').trim();
-    if (!referrerCode) return;
-
-    const currentTgId = tg?.initDataUnsafe?.user?.id ? String(tg.initDataUnsafe.user.id) : null;
-    const currentUid = user.uid;
-
-    if (referrerCode === currentTgId || referrerCode === currentUid) {
-      console.log("Self referral ignored");
-      return;
-    }
-
-    try {
-      let referrerDocRef: any = null;
-      let referrerData: any = null;
-
-      const numCode = Number(referrerCode);
-      const usersRef = collection(db, 'users');
-      
-      // Try searching telegramId
-      let q = query(usersRef, where('telegramId', '==', isNaN(numCode) ? referrerCode : numCode));
-      let qSnap = await getDocs(q);
-
-      if (qSnap.empty) {
-        q = query(usersRef, where('telegramId', '==', String(referrerCode)));
-        qSnap = await getDocs(q);
-      }
-
-      if (!qSnap.empty) {
-        referrerDocRef = qSnap.docs[0].ref;
-        referrerData = qSnap.docs[0].data();
-      } else {
-        const docDirect = doc(db, 'users', referrerCode);
-        const docDirectSnap = await getDoc(docDirect);
-        if (docDirectSnap.exists()) {
-          referrerDocRef = docDirect;
-          referrerData = docDirectSnap.data();
-        }
-      }
-
-      if (!referrerDocRef || !referrerData || referrerDocRef.id === currentUid) {
-        await updateDoc(doc(db, 'users', currentUid), { hasProcessedReferral: true });
-        return;
-      }
-
-      const userRef = doc(db, 'users', currentUid);
-      const newUsername = userDocData?.username || tg?.initDataUnsafe?.user?.username || `user_${currentUid.slice(0, 5)}`;
-
-      const isPremium = Boolean(tg?.initDataUnsafe?.user?.is_premium);
-      const referrerReward = isPremium ? 100 : 30;
-      const friendReward = isPremium ? 50 : 10;
-
-      await runTransaction(db, async (transaction) => {
-        const refSnap = await transaction.get(referrerDocRef);
-        if (!refSnap.exists()) return;
-        const rData: any = refSnap.data() || {};
-
-        const refOldBeta = rData.betaBalances?.GRMF || 0;
-        const refOldReal = rData.realBalances?.GRMF || 0;
-        const refOldEarned = rData.referralEarnings?.GRMF || 0;
-        const refInvites = rData.inviteCount || 0;
-
-        const newInvitedUser = {
-          uid: currentUid,
-          username: newUsername,
-          telegramId: currentTgId || null,
-          isPremium: isPremium,
-          joinedAt: new Date().toISOString(),
-          reward: referrerReward
-        };
-
-        transaction.update(referrerDocRef, {
-          'betaBalances.GRMF': refOldBeta + referrerReward,
-          'realBalances.GRMF': refOldReal + referrerReward,
-          'referralEarnings.GRMF': refOldEarned + referrerReward,
-          inviteCount: refInvites + 1,
-          invitedUsers: arrayUnion(newInvitedUser)
-        });
-
-        const uSnap = await transaction.get(userRef);
-        const uData: any = uSnap.exists() ? uSnap.data() : {};
-        const uOldBeta = uData.betaBalances?.GRMF || 0;
-        const uOldReal = uData.realBalances?.GRMF || 0;
-
-        transaction.set(userRef, {
-          referredBy: referrerCode,
-          hasProcessedReferral: true,
-          referralBonusReceived: friendReward,
-          'betaBalances.GRMF': uOldBeta + friendReward,
-          'realBalances.GRMF': uOldReal + friendReward
-        }, { merge: true });
-      });
-
-      console.log(`Referral credited! Referrer +${referrerReward} GRMF, Referred User +${friendReward} GRMF (isPremium: ${isPremium})`);
-    } catch (err) {
-      console.error("Error processing referral:", err);
-    }
-  };
-
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -288,9 +181,13 @@ function App() {
               }, { merge: true });
             }
             
+            // Process referral if pending
             if (!data.hasProcessedReferral) {
-              processReferralIfAny(user, data);
+              processReferral(user.uid, data, tgUser);
             }
+
+            // Sync referrals in background for referrer
+            syncReferralsForUser(user.uid, data);
 
             // Welcome Bonus logic (taken once upon registration)
             if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${user.uid}`)) {
@@ -319,7 +216,7 @@ function App() {
               hasProcessedReferral: false
             };
             setDoc(userRef, initialData).then(() => {
-              processReferralIfAny(user, initialData);
+              processReferral(user.uid, initialData, tgUser);
             });
             if (!localStorage.getItem(`bonus_collected_${user.uid}`)) {
               setShowWelcomeModal(true);
