@@ -101,7 +101,7 @@ function App() {
   });
   const [realGrmf, setRealGrmf] = useState<number>(0);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
-  const [isAppReady, setIsAppReady] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(true);
 
   // Rewards Configuration
   const WELCOME_REWARD = 5000;
@@ -172,6 +172,10 @@ function App() {
       const userRef = doc(db, 'users', currentUid);
       const newUsername = userDocData?.username || tg?.initDataUnsafe?.user?.username || `user_${currentUid.slice(0, 5)}`;
 
+      const isPremium = Boolean(tg?.initDataUnsafe?.user?.is_premium);
+      const referrerReward = isPremium ? 100 : 30;
+      const friendReward = isPremium ? 50 : 10;
+
       await runTransaction(db, async (transaction) => {
         const refSnap = await transaction.get(referrerDocRef);
         if (!refSnap.exists()) return;
@@ -186,14 +190,15 @@ function App() {
           uid: currentUid,
           username: newUsername,
           telegramId: currentTgId || null,
+          isPremium: isPremium,
           joinedAt: new Date().toISOString(),
-          reward: 30
+          reward: referrerReward
         };
 
         transaction.update(referrerDocRef, {
-          'betaBalances.GRMF': refOldBeta + 30,
-          'realBalances.GRMF': refOldReal + 30,
-          'referralEarnings.GRMF': refOldEarned + 30,
+          'betaBalances.GRMF': refOldBeta + referrerReward,
+          'realBalances.GRMF': refOldReal + referrerReward,
+          'referralEarnings.GRMF': refOldEarned + referrerReward,
           inviteCount: refInvites + 1,
           invitedUsers: arrayUnion(newInvitedUser)
         });
@@ -206,13 +211,13 @@ function App() {
         transaction.set(userRef, {
           referredBy: referrerCode,
           hasProcessedReferral: true,
-          referralBonusReceived: 10,
-          'betaBalances.GRMF': uOldBeta + 10,
-          'realBalances.GRMF': uOldReal + 10
+          referralBonusReceived: friendReward,
+          'betaBalances.GRMF': uOldBeta + friendReward,
+          'realBalances.GRMF': uOldReal + friendReward
         }, { merge: true });
       });
 
-      console.log(`Referral credited! Referrer +30 GRMF, Referred User +10 GRMF`);
+      console.log(`Referral credited! Referrer +${referrerReward} GRMF, Referred User +${friendReward} GRMF (isPremium: ${isPremium})`);
     } catch (err) {
       console.error("Error processing referral:", err);
     }
@@ -220,15 +225,27 @@ function App() {
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
-      // Once auth is checked, we can consider the app "ready" 
-      // even if snapshot hasn't finished, as we have instantTgUsername
-      setIsAppReady(true);
-      
       if (user) {
         const detectedUsername = instantTgUsername;
-
-        // Fetch profile
         const userRef = doc(db, 'users', user.uid);
+
+        // IMMEDIATE CHECK: Fast path for Welcome Bonus
+        try {
+          const fastSnap = await getDoc(userRef);
+          if (fastSnap.exists()) {
+            const data = fastSnap.data();
+            if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${user.uid}`)) {
+              setShowWelcomeModal(true);
+            }
+          } else {
+            setShowWelcomeModal(true);
+          }
+        } catch (e) {
+          console.warn("Fast check failed:", e);
+        }
+
+        setIsAppReady(true);
+
         const unsubProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
@@ -417,41 +434,32 @@ function App() {
   const handleOpenChest = async (chestId: string, rewards: { symbol: string, amount: number }) => {
     if (!auth.currentUser) return;
     const userRef = doc(db, 'users', auth.currentUser.uid);
-    const currentBalance = balances[rewards.symbol] || 0;
-    const newBalances = { 
-      ...balances, 
-      [rewards.symbol]: currentBalance + rewards.amount 
-    };
-    await updateDoc(userRef, {
-      balances: newBalances,
-      openedChests: arrayUnion(chestId)
-    });
+    if (rewards.symbol === 'GRMF') {
+      await updateDoc(userRef, {
+        'betaBalances.GRMF': increment(rewards.amount),
+        'realBalances.GRMF': increment(rewards.amount),
+        openedChests: arrayUnion(chestId)
+      });
+    } else {
+      await updateDoc(userRef, {
+        [`betaBalances.${rewards.symbol}`]: increment(rewards.amount),
+        openedChests: arrayUnion(chestId)
+      });
+    }
   };
 
-  if (!isAppReady) {
-    return (
-      <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-[100]">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5 }}
-          className="flex flex-col items-center"
-        >
-          <div className="w-24 h-24 rounded-[2rem] bg-gradient-to-tr from-blue-500 to-indigo-600 p-0.5 shadow-2xl shadow-blue-500/20 mb-6">
-            <div className="w-full h-full bg-white rounded-[1.8rem] flex items-center justify-center overflow-hidden border border-slate-50">
-              <img src="https://i.suar.me/JpxXB/l" alt="Logo" className="w-16 h-16 object-contain" />
-            </div>
-          </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tighter mb-2">GRMF Fi</h1>
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
+  const handleClaimUnclaimedReferrals = async () => {
+    if (!auth.currentUser) return;
+    const userRef = doc(db, 'users', auth.currentUser.uid);
+    const unclaimed = userProfile?.unclaimedReferralRewards || 0;
+    if (unclaimed <= 0) return;
+
+    await updateDoc(userRef, {
+      'realBalances.GRMF': increment(unclaimed),
+      'betaBalances.GRMF': increment(unclaimed),
+      unclaimedReferralRewards: 0
+    });
+  };
 
   return (
     <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden">
@@ -466,7 +474,7 @@ function App() {
         onOpenAdmin={isAdmin ? () => setActiveView('admin') : undefined}
       />
 
-      <main className={`flex-1 w-full mx-auto px-4 pt-2 pb-24 flex flex-col overflow-hidden relative ${
+      <main className={`flex-1 w-full mx-auto px-3 sm:px-4 pt-2 pb-[calc(5rem+env(safe-area-inset-bottom,20px))] flex flex-col overflow-hidden relative ${
         activeView === 'admin' && isAdmin ? 'max-w-5xl' : 'max-w-lg'
       }`}>
         <AnimatePresence mode="wait">
@@ -513,6 +521,7 @@ function App() {
                 key="referrals" 
                 userProfile={userProfile} 
                 onOpenChest={handleOpenChest}
+                onClaimUnclaimed={handleClaimUnclaimedReferrals}
               />
             </div>
           )}
@@ -540,8 +549,8 @@ function App() {
         </AnimatePresence>
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-2xl border-t border-slate-200 px-3 pt-2.5 pb-7 z-50">
-        <div className="max-w-md mx-auto flex items-center justify-between">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200 px-2 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom,16px))] z-50 shadow-lg">
+        <div className="max-w-md mx-auto flex items-center justify-around gap-0.5">
           <NavButton 
             active={activeView === 'swap'} 
             onClick={() => setActiveView('swap')} 
@@ -669,23 +678,23 @@ function App() {
 const NavButton = ({ active, onClick, icon, label, badge }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, badge?: string }) => (
   <button 
     onClick={onClick}
-    className={`flex flex-col items-center gap-1.5 transition-all relative ${active ? 'text-[#24A1DE]' : 'text-slate-400'}`}
+    className={`flex-1 flex flex-col items-center gap-1 transition-all relative py-0.5 px-0.5 ${active ? 'text-[#24A1DE]' : 'text-slate-400 hover:text-slate-600'}`}
   >
     {badge && (
-      <span className="absolute -top-1 -right-2 bg-[#24A1DE] text-white text-[7px] font-black px-1 py-0.5 rounded-full border border-white shadow-sm z-10 animate-pulse">
+      <span className="absolute -top-1 right-0 sm:right-1 bg-[#24A1DE] text-white text-[7px] font-black px-1 py-0.2 rounded-full border border-white shadow-xs z-10 animate-pulse">
         {badge}
       </span>
     )}
     {active && (
       <motion.div 
         layoutId="nav-glow"
-        className="absolute -top-3 w-10 h-6 bg-blue-500/10 blur-xl rounded-full"
+        className="absolute -top-2 w-8 h-5 bg-blue-500/10 blur-md rounded-full"
       />
     )}
-    <div className={`p-2 rounded-xl transition-all ${active ? 'bg-blue-50' : ''}`}>
-      {React.cloneElement(icon as React.ReactElement, { strokeWidth: active ? 2.5 : 2 })}
+    <div className={`p-1.5 sm:p-2 rounded-xl transition-all ${active ? 'bg-blue-50/80 scale-105' : ''}`}>
+      {React.cloneElement(icon as React.ReactElement, { className: 'w-4 h-4 sm:w-5 sm:h-5', strokeWidth: active ? 2.5 : 2 })}
     </div>
-    <span className={`text-[10px] font-bold uppercase tracking-wider ${active ? 'opacity-100' : 'opacity-60'} transition-all`}>
+    <span className={`text-[9px] sm:text-[10px] font-black uppercase tracking-tight ${active ? 'opacity-100' : 'opacity-60'} transition-all truncate max-w-full`}>
       {label}
     </span>
     {active && (
