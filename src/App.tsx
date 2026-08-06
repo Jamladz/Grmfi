@@ -8,7 +8,9 @@ import {
   ListTodo,
   User,
   Zap,
-  Award
+  Award,
+  UserCheck,
+  Sparkles
 } from 'lucide-react';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { 
@@ -105,6 +107,12 @@ function App() {
   });
   const [realGrmf, setRealGrmf] = useState<number>(0);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+  const [referralBonusModal, setReferralBonusModal] = useState<{
+    show: boolean;
+    reward: number;
+    referrerName: string;
+    isPremium: boolean;
+  } | null>(null);
   const [isAppReady, setIsAppReady] = useState(true);
 
   // Rewards Configuration
@@ -183,7 +191,27 @@ function App() {
             
             // Process referral if pending
             if (!data.hasProcessedReferral) {
-              processReferral(user.uid, data, tgUser);
+              processReferral(user.uid, data, tgUser).then((res) => {
+                if (res && res.success && res.reward) {
+                  setReferralBonusModal({
+                    show: true,
+                    reward: res.reward,
+                    referrerName: res.referrerUsername || 'Friend',
+                    isPremium: !!res.isPremium
+                  });
+                }
+              });
+            } else if (
+              data.referralBonusReceived && 
+              !data.hasSeenReferralRewardModal && 
+              !localStorage.getItem(`seen_ref_modal_${user.uid}`)
+            ) {
+              setReferralBonusModal({
+                show: true,
+                reward: data.referralBonusReceived,
+                referrerName: data.referredByName || 'Friend',
+                isPremium: Boolean(data.isPremium)
+              });
             }
 
             // Sync referrals in background for referrer
@@ -216,7 +244,16 @@ function App() {
               hasProcessedReferral: false
             };
             setDoc(userRef, initialData).then(() => {
-              processReferral(user.uid, initialData, tgUser);
+              processReferral(user.uid, initialData, tgUser).then((res) => {
+                if (res && res.success && res.reward) {
+                  setReferralBonusModal({
+                    show: true,
+                    reward: res.reward,
+                    referrerName: res.referrerUsername || 'Friend',
+                    isPremium: !!res.isPremium
+                  });
+                }
+              });
             });
             if (!localStorage.getItem(`bonus_collected_${user.uid}`)) {
               setShowWelcomeModal(true);
@@ -231,6 +268,16 @@ function App() {
 
     return () => unsubAuth();
   }, []);
+
+  const dismissReferralModal = () => {
+    if (auth.currentUser) {
+      const uid = auth.currentUser.uid;
+      localStorage.setItem(`seen_ref_modal_${uid}`, 'true');
+      const userRef = doc(db, 'users', uid);
+      updateDoc(userRef, { hasSeenReferralRewardModal: true }).catch(() => {});
+    }
+    setReferralBonusModal(null);
+  };
 
   const collectWelcomeBonus = async () => {
     if (!auth.currentUser) return;
@@ -541,6 +588,75 @@ function App() {
                 <p className="mt-6 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
                   Exclusive Telegram Member Bonus
                 </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Referral Reward Modal Banner for Referred User */}
+        {referralBonusModal?.show && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="w-full max-w-sm bg-white rounded-[40px] p-6 text-center shadow-2xl relative overflow-hidden border border-slate-100"
+            >
+              <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-amber-50 via-amber-50/50 to-transparent -z-0" />
+
+              <div className="relative z-10 flex flex-col items-center">
+                <div className="w-20 h-20 rounded-[28px] bg-gradient-to-tr from-amber-400 via-amber-500 to-yellow-600 mb-4 flex items-center justify-center shadow-xl shadow-amber-500/30 transform -rotate-3">
+                  <div className="relative">
+                    <Trophy className="w-10 h-10 text-white fill-white/20" />
+                    <motion.div
+                      animate={{ scale: [1, 1.25, 1], rotate: [0, 15, -15, 0] }}
+                      transition={{ repeat: Infinity, duration: 2.5 }}
+                      className="absolute -top-2 -right-2 w-7 h-7 bg-emerald-500 rounded-full flex items-center justify-center border-2 border-white shadow-sm"
+                    >
+                      <Sparkles className="w-4 h-4 text-white" />
+                    </motion.div>
+                  </div>
+                </div>
+
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100/80 border border-amber-200 rounded-full text-amber-800 text-[10px] font-black uppercase tracking-wider mb-2">
+                  <UserCheck className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Referral Bonus Unlocked</span>
+                </div>
+
+                <h3 className="text-2xl font-black text-slate-900 tracking-tight leading-tight mb-2">
+                  🎉 مكافأة الإحالة!
+                </h3>
+                
+                <p className="text-xs text-slate-600 font-medium px-2 mb-5 leading-relaxed">
+                  لقد انضممت بنجاح عبر رابط إحالة من <strong className="text-slate-900 font-bold">@{referralBonusModal.referrerName}</strong>!
+                </p>
+
+                <div className="w-full bg-gradient-to-br from-slate-50 to-amber-50/40 border border-amber-200/60 p-5 rounded-[28px] mb-6 relative">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
+                    Bonus Received
+                  </span>
+                  <div className="flex items-baseline justify-center gap-1.5">
+                    <span className="text-4xl font-black text-slate-900 tracking-tighter">
+                      +{referralBonusModal.reward}
+                    </span>
+                    <span className="text-base font-black text-amber-600 uppercase">GRMF</span>
+                  </div>
+                  {referralBonusModal.isPremium && (
+                    <span className="mt-1 inline-block text-[9px] font-black text-amber-700 bg-amber-200/60 px-2 py-0.5 rounded-md uppercase">
+                      ⭐ Telegram Premium Bonus
+                    </span>
+                  )}
+                  <span className="text-[10px] text-emerald-600 font-bold block mt-2">
+                    ✓ تمت إضافة المكافأة إلى رصيدك بنجاح!
+                  </span>
+                </div>
+
+                <button
+                  onClick={dismissReferralModal}
+                  className="w-full py-4 rounded-[22px] bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-white font-black uppercase tracking-widest text-xs shadow-xl shadow-amber-500/25 transition-all active:scale-[0.96]"
+                >
+                  استلام واستمرار 🚀
+                </button>
               </div>
             </motion.div>
           </div>

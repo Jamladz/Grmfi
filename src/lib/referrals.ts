@@ -154,6 +154,14 @@ export const findReferrerDoc = async (referrerCode: string) => {
   return null;
 };
 
+export interface ProcessReferralResult {
+  success: boolean;
+  reward?: number;
+  isPremium?: boolean;
+  referrerUsername?: string;
+  referrerDocId?: string;
+}
+
 /**
  * Main function to process referrals reliably
  */
@@ -161,17 +169,17 @@ export const processReferral = async (
   currentUid: string,
   currentUserData: any,
   tgUser?: any
-): Promise<boolean> => {
-  if (!currentUid) return false;
+): Promise<ProcessReferralResult> => {
+  if (!currentUid) return { success: false };
 
   // Don't re-process if already processed or has referredBy set
   if (currentUserData?.hasProcessedReferral || currentUserData?.referredBy) {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
-    return false;
+    return { success: false };
   }
 
   const referrerCode = extractAndStoreReferralCode();
-  if (!referrerCode) return false;
+  if (!referrerCode) return { success: false };
 
   const currentTgId = tgUser?.id ? String(tgUser.id) : (currentUserData?.telegramId ? String(currentUserData.telegramId) : null);
   const currentTgUsername = (tgUser?.username || currentUserData?.telegramUsername || currentUserData?.username || '').toLowerCase().replace(/^@/, '');
@@ -185,7 +193,7 @@ export const processReferral = async (
     console.log("Self referral detected and ignored.");
     localStorage.removeItem(LOCAL_STORAGE_KEY);
     await updateDoc(doc(db, 'users', currentUid), { hasProcessedReferral: true }).catch(() => {});
-    return false;
+    return { success: false };
   }
 
   try {
@@ -193,8 +201,7 @@ export const processReferral = async (
 
     if (!referrer || referrer.id === currentUid) {
       console.warn(`Referrer document not found for code: ${referrerCode}`);
-      // Do NOT set hasProcessedReferral = true if code looks like a real ID, allow retry when referrer creates account
-      return false;
+      return { success: false };
     }
 
     const referrerDocRef = referrer.ref;
@@ -261,10 +268,19 @@ export const processReferral = async (
     // 4. Cleanup localStorage
     localStorage.removeItem(LOCAL_STORAGE_KEY);
     console.log(`Referral processed successfully! Referrer (+${referrerReward} GRMF), Referred (+${friendReward} GRMF)`);
-    return true;
+
+    const referrerName = referrerData.username || referrerData.telegramUsername || 'Friend';
+
+    return {
+      success: true,
+      reward: friendReward,
+      isPremium: isPremium,
+      referrerUsername: referrerName,
+      referrerDocId: referrerDocId
+    };
   } catch (err) {
     console.error("Error processing referral:", err);
-    return false;
+    return { success: false };
   }
 };
 
