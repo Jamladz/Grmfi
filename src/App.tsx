@@ -7,7 +7,8 @@ import {
   Trophy, 
   ListTodo,
   User,
-  Zap
+  Zap,
+  Award
 } from 'lucide-react';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { 
@@ -22,7 +23,8 @@ import {
   where,
   getDocs,
   runTransaction,
-  getDoc
+  getDoc,
+  increment
 } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
 
@@ -47,6 +49,26 @@ type ActiveView = 'swap' | 'tasks' | 'airdrop' | 'profile' | 'referrals' | 'admi
 
 function App() {
   const [tonConnectUI] = useTonConnectUI();
+  // Initialize Telegram WebApp data immediately
+  const tg = (window as any).Telegram?.WebApp;
+  const tgUser = tg?.initDataUnsafe?.user;
+  
+  // Professional initialization
+  useEffect(() => {
+    if (tg) {
+      try {
+        tg.ready();
+        tg.expand();
+        // Set header color to match app theme
+        tg.setHeaderColor?.('#ffffff');
+        // Enable closing confirmation to prevent accidental swipes
+        tg.enableClosingConfirmation?.();
+      } catch (e) {
+        console.warn("Telegram WebApp initialization error:", e);
+      }
+    }
+  }, [tg]);
+
   const [activeView, setActiveView] = useState<ActiveView>('swap');
   
   const [fromToken, setFromToken] = useState<Token>(TOKENS[0]); // GRMF (Top)
@@ -58,7 +80,17 @@ function App() {
   const [txState, setTxState] = useState<TransactionState>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  const [userProfile, setUserProfile] = useState<any>(null);
+  // Derived Telegram User info for instant display
+  const instantTgUsername = tgUser?.username || (
+    tgUser?.first_name ? `${tgUser.first_name}${tgUser.last_name ? ' ' + tgUser.last_name : ''}`.trim() : null
+  );
+
+  const [userProfile, setUserProfile] = useState<any>(instantTgUsername ? {
+    username: instantTgUsername,
+    telegramUsername: instantTgUsername,
+    photoUrl: tgUser?.photo_url || null,
+    telegramId: tgUser?.id || null,
+  } : null);
   const [balances, setBalances] = useState<Record<string, number>>({
     GRAM: 0,
     GRMF: 0,
@@ -69,10 +101,13 @@ function App() {
   });
   const [realGrmf, setRealGrmf] = useState<number>(0);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(false);
+
+  // Rewards Configuration
+  const WELCOME_REWARD = 5000;
+  const DAILY_REWARD_REAL = 5;
 
   // Admin access check for sekanedr_is
-  const tgWebApp = (window as any).Telegram?.WebApp;
-  const tgUser = tgWebApp?.initDataUnsafe?.user;
   const rawTgUsername = tgUser?.username || userProfile?.telegramUsername || userProfile?.username || '';
   const sanitizedTgUsername = rawTgUsername.toLowerCase().replace(/^@/, '').trim();
   const isAdmin = sanitizedTgUsername === 'sekanedr_is' || auth.currentUser?.email === 'sekanedrmessaif@gmail.com';
@@ -185,39 +220,45 @@ function App() {
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      // Once auth is checked, we can consider the app "ready" 
+      // even if snapshot hasn't finished, as we have instantTgUsername
+      setIsAppReady(true);
+      
       if (user) {
-        // Initialize Telegram WebApp if available
-        const tg = (window as any).Telegram?.WebApp;
-        if (tg) {
-          try {
-            tg.ready?.();
-            tg.expand?.();
-          } catch (e) {
-            console.warn("Telegram WebApp initialization error:", e);
-          }
-        }
-
-        const tgUser = tg?.initDataUnsafe?.user;
-        const detectedUsername = tgUser?.username || (
-          tgUser?.first_name ? `${tgUser.first_name}${tgUser.last_name ? ' ' + tgUser.last_name : ''}`.trim() : null
-        );
+        const detectedUsername = instantTgUsername;
 
         // Fetch profile
         const userRef = doc(db, 'users', user.uid);
         const unsubProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
-            setUserProfile(data);
+            setUserProfile((prev: any) => ({ ...prev, ...data }));
             setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
             setRealGrmf(data.realBalances?.GRMF || 0);
 
-            // Periodically or on load update lastActiveAt for 24h active user tracking
+            // 1. Activity Persistence: Track last active and Daily login bonus
+            const now = Date.now();
             const lastActive = data.lastActiveTimestamp || 0;
-            if (Date.now() - lastActive > 5 * 60 * 1000) { // Update every 5 minutes
-              setDoc(userRef, {
+            const lastLoginBonusAt = data.lastLoginBonusTimestamp || 0;
+            
+            // Check if it's a new day for Daily Login Reward (Activity saving)
+            const isNewDay = new Date(now).toDateString() !== new Date(lastLoginBonusAt).toDateString();
+            
+            if (isNewDay && data.hasCollectedWelcomeBonus) {
+              // Automatically award daily login reward if user is returning
+              updateDoc(userRef, {
+                'realBalances.GRMF': increment(DAILY_REWARD_REAL),
+                lastLoginBonusTimestamp: now,
                 lastActiveAt: serverTimestamp(),
-                lastActiveTimestamp: Date.now()
-              }, { merge: true });
+                lastActiveTimestamp: now
+              });
+              console.log("Daily reward credited for returning user!");
+            } else if (now - lastActive > 5 * 60 * 1000) { 
+              // Periodically update lastActiveAt every 5 minutes
+              updateDoc(userRef, {
+                lastActiveAt: serverTimestamp(),
+                lastActiveTimestamp: now
+              });
             }
 
             // Automatically update username in Firestore if detected from Telegram and missing/placeholder
@@ -234,6 +275,7 @@ function App() {
               processReferralIfAny(user, data);
             }
 
+            // Welcome Bonus logic (taken once upon registration)
             if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${user.uid}`)) {
               setShowWelcomeModal(true);
             } else {
@@ -285,18 +327,17 @@ function App() {
     localStorage.setItem(`bonus_collected_${uid}`, 'true');
 
     // Optimistic UI updates
-    const updatedBeta = { ...balances, GRMF: (balances.GRMF || 0) + 5000 };
-    const updatedReal = (realGrmf || 0) + 5000;
+    const updatedBeta = { ...balances, GRMF: (balances.GRMF || 0) + WELCOME_REWARD };
+    
     setBalances(updatedBeta);
-    setRealGrmf(updatedReal);
     setShowWelcomeModal(false);
 
     try {
-      await setDoc(userRef, {
-        betaBalances: updatedBeta,
-        realBalances: { GRMF: updatedReal },
-        hasCollectedWelcomeBonus: true
-      }, { merge: true });
+      await updateDoc(userRef, {
+        'betaBalances.GRMF': increment(WELCOME_REWARD),
+        hasCollectedWelcomeBonus: true,
+        lastLoginBonusTimestamp: Date.now()
+      });
     } catch (error) {
       console.error("Error collecting bonus:", error);
     }
@@ -324,7 +365,7 @@ function App() {
         setTxState('success');
         setTxHash('0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6));
         
-        // Update Firestore beta balances
+        // Update Firestore beta balances and give small REAL reward for activity
         if (auth.currentUser) {
           const userRef = doc(db, 'users', auth.currentUser.uid);
           const fAmt = parseFloat(fromAmount);
@@ -336,9 +377,15 @@ function App() {
             [toToken.symbol]: (balances[toToken.symbol] || 0) + tAmt
           };
           
-          // Reward 0.1 real GRMF for every swap? Or just rely on tasks?
-          // The user mentioned "tasks for swapping", so I'll handle rewards there.
-          await updateDoc(userRef, { betaBalances: newBetaBalances });
+          // Reward small real GRMF for every swap to make it feel real
+          const REAL_SWAP_REWARD = 0.5;
+
+          await updateDoc(userRef, { 
+            betaBalances: newBetaBalances,
+            'realBalances.GRMF': increment(REAL_SWAP_REWARD),
+            lastActiveAt: serverTimestamp(),
+            lastActiveTimestamp: Date.now()
+          });
         }
       }, 2000);
     }, 1500);
@@ -380,6 +427,31 @@ function App() {
       openedChests: arrayUnion(chestId)
     });
   };
+
+  if (!isAppReady) {
+    return (
+      <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-[100]">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5 }}
+          className="flex flex-col items-center"
+        >
+          <div className="w-24 h-24 rounded-[2rem] bg-gradient-to-tr from-blue-500 to-indigo-600 p-0.5 shadow-2xl shadow-blue-500/20 mb-6">
+            <div className="w-full h-full bg-white rounded-[1.8rem] flex items-center justify-center overflow-hidden border border-slate-50">
+              <img src="https://i.suar.me/JpxXB/l" alt="Logo" className="w-16 h-16 object-contain" />
+            </div>
+          </div>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tighter mb-2">GRMF Fi</h1>
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden">
@@ -514,40 +586,55 @@ function App() {
 
       <AnimatePresence>
         {showWelcomeModal && (
-          <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/60 backdrop-blur-md">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/80 backdrop-blur-xl p-6">
             <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="w-full max-w-md bg-white rounded-t-[48px] p-8 pb-12 text-center shadow-2xl relative overflow-hidden border-t border-slate-100"
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="w-full max-w-sm bg-white rounded-[40px] p-8 text-center shadow-2xl relative overflow-hidden border border-slate-100"
             >
-              <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-8" />
+              {/* Decorative background */}
+              <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-blue-50 to-transparent -z-0" />
               
-              <div className="relative z-10">
-                <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#24A1DE] to-[#1e88ba] mx-auto mb-6 flex items-center justify-center shadow-xl">
-                  <Zap className="w-10 h-10 text-white fill-white/20" />
+              <div className="relative z-10 flex flex-col items-center">
+                <div className="w-24 h-24 rounded-[32px] bg-gradient-to-tr from-blue-600 to-indigo-700 mb-6 flex items-center justify-center shadow-2xl shadow-blue-600/30 transform rotate-3">
+                  <div className="relative">
+                    <Trophy className="w-12 h-12 text-white fill-white/10" />
+                    <motion.div 
+                      animate={{ scale: [1, 1.2, 1] }}
+                      transition={{ repeat: Infinity, duration: 2 }}
+                      className="absolute -top-2 -right-2 w-6 h-6 bg-amber-400 rounded-full flex items-center justify-center border-2 border-blue-600"
+                    >
+                      <Zap className="w-3 h-3 text-white fill-white" />
+                    </motion.div>
+                  </div>
                 </div>
                 
-                <h3 className="text-2xl font-black text-slate-900 tracking-tighter leading-tight mb-2">Beta Access Bonus</h3>
-                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest leading-relaxed mb-8">
-                  Get started with your <span className="text-[#24A1DE]">Testnet Starter Pack</span>
+                <h3 className="text-3xl font-black text-slate-900 tracking-tighter leading-tight mb-3">Welcome Reward</h3>
+                <p className="text-sm text-slate-500 font-medium px-4 mb-8">
+                  Thanks for joining GRMF Fi. We've credited your account with a starter balance.
                 </p>
 
-                <div className="bg-slate-50 border border-slate-100 p-8 rounded-[32px] mb-8">
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-5xl font-black text-slate-900 tracking-tighter">5,000</span>
-                    <span className="text-sm font-black text-[#24A1DE] uppercase">GRMF</span>
+                <div className="w-full bg-slate-50 border border-slate-100 p-8 rounded-[32px] mb-8 relative group">
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-white border border-slate-100 rounded-full shadow-sm">
+                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Limited Gift</span>
                   </div>
-                  <p className="text-[8px] text-amber-600 font-black uppercase tracking-tighter mt-3 bg-amber-50 px-3 py-1 rounded-full border border-amber-100 inline-block">Beta Phase Currency Only</p>
+                  <div className="flex items-baseline justify-center gap-2">
+                    <span className="text-5xl font-black text-slate-900 tracking-tighter">{WELCOME_REWARD.toLocaleString()}</span>
+                    <span className="text-lg font-black text-blue-600 uppercase">GRMF</span>
+                  </div>
                 </div>
 
                 <button
                   onClick={collectWelcomeBonus}
-                  className="w-full py-5 rounded-3xl bg-slate-900 text-white font-black uppercase tracking-widest text-[11px] shadow-xl transition-all active:scale-[0.97]"
+                  className="w-full py-5 rounded-[24px] bg-slate-900 text-white font-black uppercase tracking-widest text-[11px] shadow-2xl shadow-slate-900/20 transition-all active:scale-[0.96] hover:bg-slate-800"
                 >
-                  Collect & Start Swapping
+                  Claim & Explore
                 </button>
+                
+                <p className="mt-6 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                  Exclusive Telegram Member Bonus
+                </p>
               </div>
             </motion.div>
           </div>

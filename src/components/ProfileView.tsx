@@ -12,7 +12,7 @@ interface ProfileViewProps {
 export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile }) => {
   const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
 
-  const rawUsername = userProfile?.username || 'user';
+  const rawUsername = userProfile?.username || userProfile?.telegramUsername || 'user';
   const displayUsername = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
 
   const displayedTokens = ['GRMF', 'GRAM', 'USDT']
