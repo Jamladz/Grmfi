@@ -320,25 +320,25 @@ export const WhitepaperModal: React.FC<WhitepaperModalProps> = ({ isOpen, onClos
           <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-2 shrink-0" />
 
           {/* Language Selector Toolbar */}
-          <div className="flex items-center justify-between bg-slate-50 border border-slate-100 p-1.5 rounded-2xl mb-2.5 shrink-0">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 px-1">
+          <div className="flex items-center justify-between bg-slate-50 border border-slate-100 p-1 rounded-xl mb-2.5 shrink-0 gap-1">
+            <div className="flex items-center gap-1 text-[10px] font-black text-slate-400 px-1 shrink-0">
               <Languages className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              <span className="text-[10px] uppercase tracking-wider font-black">Language</span>
+              <span className="hidden sm:inline uppercase tracking-wider text-[9px]">Lang</span>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="grid grid-cols-4 gap-1 flex-1 min-w-0">
               {LANGUAGES.map((l) => (
                 <button
                   key={l.code}
                   onClick={() => setLang(l.code)}
-                  className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 border ${
+                  className={`py-1 px-1 rounded-lg text-[9px] font-bold transition-all flex items-center justify-center gap-1 border text-center whitespace-nowrap min-w-0 ${
                     lang === l.code
                       ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      : 'bg-white text-slate-600 border-slate-200/80 hover:bg-slate-100'
                   }`}
                 >
-                  <span className="text-xs">{l.code === 'ar' ? '🇸🇦' : l.flag}</span>
-                  <span>{l.label}</span>
+                  <span className="text-[10px] leading-none shrink-0">{l.code === 'ar' ? '🇸🇦' : l.flag}</span>
+                  <span className="truncate">{l.label}</span>
                 </button>
               ))}
             </div>
