@@ -20,7 +20,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
   const rawUsername = userProfile?.username || userProfile?.telegramUsername || 'user';
   const displayUsername = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
 
-  const displayedTokens = ['GRMF', 'GRAM', 'USDT']
+  const displayedTokens = ['GRMF', 'GRAM', 'USDT', 'NOT', 'DOGS', 'HMSTR']
     .map(symbol => TOKENS.find(t => t.symbol === symbol))
     .filter(Boolean) as typeof TOKENS;
 

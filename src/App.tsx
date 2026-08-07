@@ -381,6 +381,7 @@ function App() {
 
     try {
       await updateDoc(userRef, {
+        'realBalances.GRMF': increment(WELCOME_REWARD),
         'betaBalances.GRMF': increment(WELCOME_REWARD),
         hasCollectedWelcomeBonus: true,
         lastLoginBonusTimestamp: Date.now()

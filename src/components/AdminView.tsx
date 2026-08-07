@@ -22,7 +22,7 @@ import {
   Flame,
   Wallet
 } from 'lucide-react';
-import { collection, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, getDocs, doc, setDoc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 interface AdminViewProps {
@@ -42,6 +42,72 @@ export const AdminView: React.FC<AdminViewProps> = ({ userProfile }) => {
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [selectedUserModal, setSelectedUserModal] = useState<any | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
+  const [customAwardAmount, setCustomAwardAmount] = useState<string>('50');
+  const [awardSuccessMsg, setAwardSuccessMsg] = useState<string | null>(null);
+  const [isAwarding, setIsAwarding] = useState(false);
+
+  const handleAwardTokens = async (targetUser: any, amount: number, balanceType: 'real' | 'beta' = 'real') => {
+    if (!targetUser || !amount || amount <= 0) return;
+    setIsAwarding(true);
+    setAwardSuccessMsg(null);
+    
+    const userRef = doc(db, 'users', targetUser.id);
+    try {
+      await setDoc(userRef, {
+        [balanceType === 'real' ? 'realBalances' : 'betaBalances']: {
+          GRMF: increment(amount)
+        }
+      }, { merge: true });
+
+      setAwardSuccessMsg(`✅ +${amount} ${balanceType.toUpperCase()} GRMF awarded to ${targetUser.username}! Saved to Firestore.`);
+      setSelectedUserModal((prev: any) => prev ? {
+        ...prev,
+        realGrmf: balanceType === 'real' ? (prev.realGrmf || 0) + amount : prev.realGrmf,
+        betaGrmf: balanceType === 'beta' ? (prev.betaGrmf || 0) + amount : prev.betaGrmf,
+      } : null);
+    } catch (err: any) {
+      console.error("Admin reward failed:", err);
+      setAwardSuccessMsg(`❌ Error: ${err.message || 'Failed to award tokens.'}`);
+    } finally {
+      setIsAwarding(false);
+    }
+  };
+
+  const handleApproveAllUserTasks = async (targetUser: any) => {
+    if (!targetUser) return;
+    setIsAwarding(true);
+    setAwardSuccessMsg(null);
+
+    const userRef = doc(db, 'users', targetUser.id);
+    const nextDay = new Date();
+    nextDay.setUTCHours(24, 0, 0, 0);
+
+    try {
+      const taskIds = ['daily-checkin', 'daily-box', 'beta-swap', 'swap-grmf-gram', 'swap-grmf-not', 'join-channel'];
+      const taskProgress: any = {};
+      taskIds.forEach(id => {
+        taskProgress[id] = {
+          status: 'completed',
+          lastCompletedAt: serverTimestamp(),
+          nextAvailableAt: nextDay
+        };
+      });
+
+      await setDoc(userRef, {
+        realBalances: {
+          GRMF: increment(10)
+        },
+        taskProgress: taskProgress
+      }, { merge: true });
+
+      setAwardSuccessMsg(`🎉 All tasks marked completed for ${targetUser.username}! (+10 GRMF added)`);
+    } catch (err: any) {
+      console.error("Task approval failed:", err);
+      setAwardSuccessMsg(`❌ Error: ${err.message || 'Failed to approve tasks.'}`);
+    } finally {
+      setIsAwarding(false);
+    }
+  };
 
   useEffect(() => {
     setIsLoading(true);
@@ -726,6 +792,72 @@ export const AdminView: React.FC<AdminViewProps> = ({ userProfile }) => {
                   <span className="text-[9px] text-slate-400 font-bold block">BETA GRAM</span>
                   <span className="text-xs font-black text-slate-900">{selectedUserModal.betaGram}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* Admin Reward & Task Action Panel */}
+            <div className="p-4 bg-slate-900 text-white rounded-3xl space-y-3 border border-slate-800 shadow-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Gift className="w-4 h-4 text-amber-400" />
+                  <span className="text-xs font-black uppercase tracking-wider text-amber-400">Admin Reward Controls</span>
+                </div>
+                <span className="text-[9px] bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded-full">
+                  Firestore Direct
+                </span>
+              </div>
+
+              {/* Success / Error Message Banner */}
+              {awardSuccessMsg && (
+                <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-[11px] font-medium leading-tight">
+                  {awardSuccessMsg}
+                </div>
+              )}
+
+              {/* Quick Reward Buttons */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Quick Grant Tokens:</span>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[10, 50, 100, 500].map((amt) => (
+                    <button
+                      key={amt}
+                      disabled={isAwarding}
+                      onClick={() => handleAwardTokens(selectedUserModal, amt, 'real')}
+                      className="py-1.5 bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-white rounded-xl text-xs font-black transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      +{amt} GRMF
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Grant Input & Task Approval */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="number"
+                  value={customAwardAmount}
+                  onChange={(e) => setCustomAwardAmount(e.target.value)}
+                  placeholder="Custom amount..."
+                  className="w-24 bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-xs font-bold text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  disabled={isAwarding || !customAwardAmount}
+                  onClick={() => handleAwardTokens(selectedUserModal, parseFloat(customAwardAmount) || 0, 'real')}
+                  className="flex-1 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isAwarding ? 'Processing...' : 'Grant GRMF'}
+                </button>
+              </div>
+
+              <div className="pt-1 border-t border-slate-800 flex items-center justify-between">
+                <button
+                  disabled={isAwarding}
+                  onClick={() => handleApproveAllUserTasks(selectedUserModal)}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Approve & Complete All Tasks (+10 GRMF)</span>
+                </button>
               </div>
             </div>
 

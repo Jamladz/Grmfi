@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, TrendingUp, Users, Calendar, Box, Sparkles, Zap, Timer, Loader2, ChevronRight } from 'lucide-react';
+import { motion } from 'motion/react';
+import { CheckCircle2, TrendingUp, Users, Calendar, Box, Zap, Timer, Loader2 } from 'lucide-react';
 import { doc, updateDoc, setDoc, increment, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { DailyBoxModal } from './DailyBoxModal';
@@ -40,49 +40,95 @@ interface TasksViewProps {
   setActiveView: (view: any) => void;
 }
 
+export function parseTimestampMs(val: any): number | undefined {
+  if (!val) return undefined;
+  if (typeof val === 'number') return val;
+  if (typeof val.toMillis === 'function') return val.toMillis();
+  if (typeof val.getTime === 'function') return val.getTime();
+  if (val.seconds !== undefined) return val.seconds * 1000;
+  if (val._seconds !== undefined) return val._seconds * 1000;
+  if (typeof val === 'string') {
+    const parsed = Date.parse(val);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return undefined;
+}
+
 export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView }) => {
   const [tasksState, setTasksState] = useState<Record<string, TaskState>>({});
   const [timeLeft, setTimeLeft] = useState<Record<string, string>>({});
   const [isDailyBoxModalOpen, setIsDailyBoxModalOpen] = useState(false);
 
+  // Sync tasksState from userProfile (Firestore snapshot) safely
   useEffect(() => {
     if (userProfile?.taskProgress) {
       const newState: Record<string, TaskState> = {};
+      const now = Date.now();
+
       Object.entries(userProfile.taskProgress).forEach(([id, data]: [string, any]) => {
+        const lastCompletedAt = parseTimestampMs(data.lastCompletedAt);
+        const nextAvailableAt = parseTimestampMs(data.nextAvailableAt);
+        const taskDef = INITIAL_TASKS.find(t => t.id === id);
+
+        let status: TaskStatus = data.status || 'idle';
+        let finalNextAvailableAt = nextAvailableAt;
+
+        if (taskDef?.isDaily) {
+          // If 24h countdown is still active, mark completed
+          if (nextAvailableAt && nextAvailableAt > now) {
+            status = 'completed';
+          } else if (nextAvailableAt && nextAvailableAt <= now) {
+            // 24 hours passed, reset status to idle
+            status = 'idle';
+          }
+        } else {
+          // One-time tasks remain permanently completed
+          if (status === 'completed') {
+            status = 'completed';
+          }
+        }
+
         newState[id] = {
-          status: data.status || 'idle',
-          lastCompletedAt: data.lastCompletedAt?.toMillis?.() || data.lastCompletedAt,
-          nextAvailableAt: data.nextAvailableAt?.toMillis?.() || data.nextAvailableAt,
+          status,
+          lastCompletedAt,
+          nextAvailableAt,
         };
       });
+
       setTasksState(newState);
     }
   }, [userProfile]);
 
+  // Timer loop for 24-hour countdowns
   useEffect(() => {
     const timer = setInterval(() => {
       const newTimeLeft: Record<string, string> = {};
       const now = Date.now();
       
       INITIAL_TASKS.forEach(task => {
-        const state = tasksState[task.id];
-        if (task.isDaily && state?.nextAvailableAt) {
-          const diff = state.nextAvailableAt - now;
-          if (diff > 0) {
+        if (task.isDaily) {
+          const state = tasksState[task.id];
+          const nextMs = parseTimestampMs(state?.nextAvailableAt);
+
+          if (nextMs && nextMs > now) {
+            const diff = nextMs - now;
             const hours = Math.floor(diff / (1000 * 60 * 60));
             const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
             const secs = Math.floor((diff % (1000 * 60)) / 1000);
             newTimeLeft[task.id] = `${hours}h ${mins}m ${secs}s`;
-          } else if (state.status === 'completed') {
+          } else if (state?.status === 'completed' && nextMs && nextMs <= now) {
+            // Timer expired! Reset task to idle for next day
             setTasksState(prev => ({
               ...prev,
-              [task.id]: { ...prev[task.id], status: 'idle' }
+              [task.id]: { ...prev[task.id], status: 'idle', nextAvailableAt: undefined }
             }));
           }
         }
       });
+
       setTimeLeft(newTimeLeft);
     }, 1000);
+
     return () => clearInterval(timer);
   }, [tasksState]);
 
@@ -92,50 +138,44 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     const userRef = doc(db, 'users', targetId);
 
     const now = Date.now();
-    const nextDay = new Date();
-    nextDay.setUTCHours(24, 0, 0, 0);
+    // Exactly 24 hours countdown from moment of claim
+    const nextAvailable = new Date(now + 24 * 60 * 60 * 1000);
 
-    try {
-      await setDoc(userRef, {
-        realBalances: {
-          GRMF: increment(1)
-        },
-        betaBalances: {
-          GRMF: increment(1)
-        },
-        taskProgress: {
-          'daily-box': {
-            status: 'completed',
-            lastCompletedAt: serverTimestamp(),
-            nextAvailableAt: nextDay
-          }
-        }
-      }, { merge: true });
-    } catch (err) {
-      console.warn("setDoc claim failed, attempting updateDoc fallback:", err);
-      try {
-        await updateDoc(userRef, {
-          'realBalances.GRMF': increment(1),
-          'betaBalances.GRMF': increment(1),
-          'taskProgress.daily-box.status': 'completed',
-          'taskProgress.daily-box.lastCompletedAt': serverTimestamp(),
-          'taskProgress.daily-box.nextAvailableAt': nextDay,
-        });
-      } catch (e) {
-        console.error("updateDoc claim fallback error:", e);
-      }
-    }
-
+    // Optimistic local state update
     setTasksState(prev => ({
       ...prev,
       'daily-box': {
         status: 'completed',
         lastCompletedAt: now,
-        nextAvailableAt: nextDay.getTime()
+        nextAvailableAt: nextAvailable.getTime()
       }
     }));
 
-    // Award 50 XP for daily box claim
+    // Firestore persistence using dot-notation to avoid wiping taskProgress map
+    try {
+      await updateDoc(userRef, {
+        'realBalances.GRMF': increment(1),
+        'betaBalances.GRMF': increment(1),
+        'taskProgress.daily-box.status': 'completed',
+        'taskProgress.daily-box.lastCompletedAt': serverTimestamp(),
+        'taskProgress.daily-box.nextAvailableAt': nextAvailable,
+      });
+    } catch (err) {
+      console.warn("updateDoc failed, using setDoc with merge:", err);
+      await setDoc(userRef, {
+        realBalances: { GRMF: increment(1) },
+        betaBalances: { GRMF: increment(1) },
+        taskProgress: {
+          'daily-box': {
+            status: 'completed',
+            lastCompletedAt: serverTimestamp(),
+            nextAvailableAt: nextAvailable
+          }
+        }
+      }, { merge: true });
+    }
+
+    // Award XP
     await awardXP(targetId, 50);
   };
 
@@ -151,7 +191,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     const userRef = doc(db, 'users', targetId);
 
     if (currentState.status === 'idle') {
-      // Execute Action
+      // Execute Action immediately
       if (task.actionType === 'swap') {
         setActiveView('swap');
       } else if (task.actionType === 'link' && task.link) {
@@ -162,37 +202,74 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       
       setTimeout(async () => {
         setTasksState(prev => ({ ...prev, [task.id]: { ...prev[task.id], status: 'claimable' } }));
-        await updateDoc(userRef, {
-          [`taskProgress.${task.id}.status`]: 'claimable'
-        });
-      }, 5000);
+        try {
+          await updateDoc(userRef, {
+            [`taskProgress.${task.id}.status`]: 'claimable'
+          });
+        } catch (err) {
+          await setDoc(userRef, {
+            taskProgress: {
+              [task.id]: { status: 'claimable' }
+            }
+          }, { merge: true });
+        }
+      }, 800);
 
     } else if (currentState.status === 'claimable') {
       const now = Date.now();
-      const nextDay = new Date();
-      nextDay.setUTCHours(24, 0, 0, 0); 
+      // Exactly 24 hours countdown from moment of claim
+      const nextAvailable = new Date(now + 24 * 60 * 60 * 1000);
       
-      const updateData: any = {
-        'realBalances.GRMF': increment(task.rewardValue),
-        [`taskProgress.${task.id}.status`]: 'completed',
-        [`taskProgress.${task.id}.lastCompletedAt`]: serverTimestamp(),
-      };
-
-      if (task.isDaily) {
-        updateData[`taskProgress.${task.id}.nextAvailableAt`] = nextDay;
-      }
-
-      await updateDoc(userRef, updateData);
-      await awardXP(targetId, 40);
-      
+      // 1. Optimistic UI update for instant feedback
       setTasksState(prev => ({
         ...prev,
         [task.id]: {
           status: 'completed',
           lastCompletedAt: now,
-          nextAvailableAt: task.isDaily ? nextDay.getTime() : undefined
+          nextAvailableAt: task.isDaily ? nextAvailable.getTime() : undefined
         }
       }));
+
+      // Trigger Telegram haptic feedback if available
+      const tg = (window as any).Telegram?.WebApp;
+      if (tg?.HapticFeedback) {
+        tg.HapticFeedback.notificationOccurred('success');
+      }
+
+      // 2. Persist to Firestore reliably using dot notation to preserve other task entries
+      try {
+        const updatePayload: Record<string, any> = {
+          'realBalances.GRMF': increment(task.rewardValue),
+          'betaBalances.GRMF': increment(task.rewardValue),
+          [`taskProgress.${task.id}.status`]: 'completed',
+          [`taskProgress.${task.id}.lastCompletedAt`]: serverTimestamp(),
+        };
+
+        if (task.isDaily) {
+          updatePayload[`taskProgress.${task.id}.nextAvailableAt`] = nextAvailable;
+        }
+
+        await updateDoc(userRef, updatePayload);
+        await awardXP(targetId, 40);
+      } catch (err) {
+        console.warn("updateDoc task claim failed, falling back to setDoc:", err);
+        try {
+          await setDoc(userRef, {
+            realBalances: { GRMF: increment(task.rewardValue) },
+            betaBalances: { GRMF: increment(task.rewardValue) },
+            taskProgress: {
+              [task.id]: {
+                status: 'completed',
+                lastCompletedAt: serverTimestamp(),
+                ...(task.isDaily ? { nextAvailableAt: nextAvailable } : {})
+              }
+            }
+          }, { merge: true });
+          await awardXP(targetId, 40);
+        } catch (e) {
+          console.error("Task claim persistence failed completely:", e);
+        }
+      }
     }
   };
 
@@ -218,7 +295,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
               const isCompleted = state.status === 'completed';
               const isChecking = state.status === 'checking';
               const isClaimable = state.status === 'claimable';
-              const isLocked = isCompleted && task.isDaily && timeLeft[task.id];
+              const isLocked = isCompleted && task.isDaily && !!timeLeft[task.id];
 
               return (
                 <div 
@@ -255,7 +332,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
                   </div>
 
                   <button
-                    disabled={isCompleted && task.id !== 'daily-box' || isChecking}
+                    disabled={isCompleted || isChecking}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleTaskAction(task);
@@ -293,7 +370,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       <DailyBoxModal
         isOpen={isDailyBoxModalOpen}
         onClose={() => setIsDailyBoxModalOpen(false)}
-        isClaimed={tasksState['daily-box']?.status === 'completed' && !!timeLeft['daily-box']}
+        isClaimed={tasksState['daily-box']?.status === 'completed'}
         timeLeft={timeLeft['daily-box']}
         onClaim={handleClaimDailyBox}
         rewardValue={1}
@@ -301,3 +378,4 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     </motion.div>
   );
 };
+
