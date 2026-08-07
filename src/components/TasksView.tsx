@@ -34,6 +34,7 @@ interface TaskState {
   status: TaskStatus;
   lastCompletedAt?: number;
   nextAvailableAt?: number;
+  checkingStartedAt?: number;
 }
 
 interface TasksViewProps {
@@ -86,6 +87,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
         Object.entries(userProfile.taskProgress).forEach(([id, data]: [string, any]) => {
           const lastCompletedAt = parseTimestampMs(data.lastCompletedAt);
           const nextAvailableAt = parseTimestampMs(data.nextAvailableAt);
+          const checkingStartedAt = parseTimestampMs(data.checkingStartedAt) || prev[id]?.checkingStartedAt;
           const taskDef = INITIAL_TASKS.find(t => t.id === id);
 
           let status: TaskStatus = data.status || 'idle';
@@ -102,16 +104,27 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
             }
           }
 
-          // Don't downgrade active local checking or claimable states unless Firestore says completed
-          const localStatus = prev[id]?.status;
-          if ((localStatus === 'checking' || localStatus === 'claimable') && status !== 'completed') {
-            status = localStatus;
+          if (status !== 'completed') {
+            if (checkingStartedAt) {
+              const elapsed = now - checkingStartedAt;
+              if (elapsed >= 5000) {
+                status = 'claimable';
+              } else {
+                status = 'checking';
+              }
+            } else {
+              const localStatus = prev[id]?.status;
+              if (localStatus === 'checking' || localStatus === 'claimable') {
+                status = localStatus;
+              }
+            }
           }
 
           newState[id] = {
             status,
             lastCompletedAt,
             nextAvailableAt,
+            checkingStartedAt,
           };
         });
 
@@ -119,6 +132,54 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       });
     }
   }, [userProfile]);
+
+  // Timer loop for active task checking status (calculates remaining checking time vs checkingStartedAt)
+  useEffect(() => {
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      const newCountdowns: Record<string, number> = {};
+
+      setTasksState(prev => {
+        let updated = false;
+        const nextTasksState = { ...prev };
+
+        Object.entries(nextTasksState).forEach(([id, state]: [string, TaskState]) => {
+          if (state.status === 'checking' && state.checkingStartedAt) {
+            const elapsed = now - state.checkingStartedAt;
+            if (elapsed >= 5000) {
+              nextTasksState[id] = {
+                ...state,
+                status: 'claimable'
+              };
+              updated = true;
+              const targetId = userProfile?.id || auth.currentUser?.uid;
+              if (targetId) {
+                setDoc(doc(db, 'users', targetId), {
+                  taskProgress: {
+                    [id]: {
+                      status: 'claimable'
+                    }
+                  }
+                }, { merge: true }).catch(() => {});
+              }
+            } else {
+              const remaining = Math.max(1, Math.ceil((5000 - elapsed) / 1000));
+              newCountdowns[id] = remaining;
+            }
+          }
+        });
+
+        if (updated) {
+          return nextTasksState;
+        }
+        return prev;
+      });
+
+      setCheckingCountdowns(newCountdowns);
+    }, 1000);
+
+    return () => clearInterval(checkInterval);
+  }, [userProfile?.id]);
 
   // Timer loop for 24-hour countdowns
   useEffect(() => {
@@ -181,7 +242,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     }));
 
     // Unified Reward Distribution
-    await grantReward({
+    const res = await grantReward({
       userId: targetId,
       telegramId: userProfile?.telegramId,
       username: userProfile?.username || userProfile?.telegramUsername,
@@ -200,6 +261,20 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       }
     });
 
+    if (!res || !res.success) {
+      // Rollback on failure
+      setTasksState(prev => ({
+        ...prev,
+        'daily-box': {
+          status: 'idle',
+          lastCompletedAt: undefined,
+          nextAvailableAt: undefined
+        }
+      }));
+      alert(`Failed to claim Daily Box: ${res?.message || 'Network error. Please try again.'}`);
+      return;
+    }
+
     // Award XP
     await awardXP(targetId, 50);
   };
@@ -210,6 +285,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
 
     const now = Date.now();
     const nextAvailable = task.isDaily ? new Date(now + 24 * 60 * 60 * 1000) : undefined;
+    const previousState = tasksState[task.id] || { status: 'claimable' };
 
     // 1. Optimistic UI update
     setTasksState(prev => ({
@@ -220,12 +296,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
         nextAvailableAt: task.isDaily && nextAvailable ? nextAvailable.getTime() : undefined
       }
     }));
-
-    // Trigger Telegram haptic feedback if available
-    const tg = (window as any).Telegram?.WebApp;
-    if (tg?.HapticFeedback) {
-      tg.HapticFeedback.notificationOccurred('success');
-    }
 
     // 2. Prepare structured extraUserUpdates
     const extraUpdates: Record<string, any> = {
@@ -240,7 +310,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
 
     // 3. Grant reward through Unified Engine
     try {
-      await grantReward({
+      const res = await grantReward({
         userId: targetId,
         telegramId: userProfile?.telegramId,
         username: userProfile?.username || userProfile?.telegramUsername,
@@ -251,9 +321,31 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
         extraUserUpdates: extraUpdates
       });
 
+      if (!res || !res.success) {
+        // Rollback local state on failure
+        setTasksState(prev => ({
+          ...prev,
+          [task.id]: previousState
+        }));
+        alert(`Failed to claim reward: ${res?.message || 'Transaction error. Please try again.'}`);
+        return;
+      }
+
+      // Trigger Telegram haptic feedback if available
+      const tg = (window as any).Telegram?.WebApp;
+      if (tg?.HapticFeedback) {
+        tg.HapticFeedback.notificationOccurred('success');
+      }
+
       await awardXP(targetId, 40);
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Failed to claim task ${task.id}:`, err);
+      // Rollback local state
+      setTasksState(prev => ({
+        ...prev,
+        [task.id]: previousState
+      }));
+      alert(`Failed to claim task: ${err?.message || 'An unexpected error occurred.'}`);
     }
   };
 
@@ -288,37 +380,34 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       return;
     }
 
-    // If task is idle, start 5-second countdown
+    // If task is idle, set persistent checking timestamp and start process
     if (currentState.status === 'idle') {
-      // 1. Open external link if available
+      // 1. Update state & save checkingStartedAt to Firestore
+      setTasksState(prev => ({
+        ...prev,
+        [task.id]: {
+          ...prev[task.id],
+          status: 'checking',
+          checkingStartedAt: now
+        }
+      }));
+      setCheckingCountdowns(prev => ({ ...prev, [task.id]: 5 }));
+
+      setDoc(doc(db, 'users', targetId), {
+        taskProgress: {
+          [task.id]: {
+            status: 'checking',
+            checkingStartedAt: now
+          }
+        }
+      }, { merge: true }).catch(err => console.warn("Error saving task checking state:", err));
+
+      // 2. Open external link or navigate view
       if (task.actionType === 'link' && task.link) {
         window.open(task.link, '_blank');
       } else if (task.actionType === 'swap') {
         setActiveView('swap');
       }
-
-      // 2. Set status to checking and start 5-second countdown
-      setTasksState(prev => ({ ...prev, [task.id]: { ...prev[task.id], status: 'checking' } }));
-      setCheckingCountdowns(prev => ({ ...prev, [task.id]: 5 }));
-
-      let remaining = 5;
-      const interval = setInterval(() => {
-        remaining -= 1;
-        if (remaining > 0) {
-          setCheckingCountdowns(prev => ({ ...prev, [task.id]: remaining }));
-        } else {
-          clearInterval(interval);
-          setCheckingCountdowns(prev => {
-            const copy = { ...prev };
-            delete copy[task.id];
-            return copy;
-          });
-          setTasksState(prev => ({
-            ...prev,
-            [task.id]: { ...prev[task.id], status: 'claimable' }
-          }));
-        }
-      }, 1000);
     }
   };
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTonConnectUI } from '@tonconnect/ui-react';
 import { 
@@ -91,6 +91,8 @@ function normalizeAndSanitizeUserData(rawData: any) {
 
 function App() {
   const [tonConnectUI] = useTonConnectUI();
+  // Guard to prevent multiple claims of daily_login bonus in the same runtime session
+  const processedDailyBonusRef = useRef<Set<string>>(new Set());
   // Initialize Telegram WebApp data immediately
   const tg = (window as any).Telegram?.WebApp;
   const tgUser = tg?.initDataUnsafe?.user;
@@ -293,9 +295,12 @@ function App() {
             const lastActive = data.lastActiveTimestamp || 0;
             const lastLoginBonusAt = data.lastLoginBonusTimestamp || 0;
             
-            const isNewDay = new Date(now).toDateString() !== new Date(lastLoginBonusAt).toDateString();
+            const todayStr = new Date(now).toDateString();
+            const isNewDay = todayStr !== new Date(lastLoginBonusAt).toDateString();
+            const bonusKey = `${userDocId}_${todayStr}`;
             
-            if (isNewDay && data.hasCollectedWelcomeBonus) {
+            if (isNewDay && data.hasCollectedWelcomeBonus && !processedDailyBonusRef.current.has(bonusKey)) {
+              processedDailyBonusRef.current.add(bonusKey);
               grantReward({
                 userId: userDocId,
                 telegramId: tgUser?.id || data.telegramId,
@@ -309,8 +314,16 @@ function App() {
                   lastActiveAt: serverTimestamp(),
                   lastActiveTimestamp: now
                 }
+              }).then(res => {
+                if (res && res.success) {
+                  console.log("Daily reward credited for returning user!");
+                } else {
+                  processedDailyBonusRef.current.delete(bonusKey);
+                }
+              }).catch(err => {
+                console.error("Daily reward failed:", err);
+                processedDailyBonusRef.current.delete(bonusKey);
               });
-              console.log("Daily reward credited for returning user!");
             } else if (now - lastActive > 5 * 60 * 1000) { 
               updateDoc(userRef, {
                 lastActiveAt: serverTimestamp(),
@@ -439,7 +452,7 @@ function App() {
     setShowWelcomeModal(false);
 
     try {
-      await grantReward({
+      const res = await grantReward({
         userId: targetId,
         telegramId: userProfile?.telegramId,
         username: userProfile?.username || userProfile?.telegramUsername,
@@ -452,6 +465,9 @@ function App() {
           lastLoginBonusTimestamp: Date.now()
         }
       });
+      if (!res || !res.success) {
+        console.warn("Welcome bonus grantReward failed:", res?.message);
+      }
     } catch (error) {
       console.error("Error collecting bonus:", error);
     }
