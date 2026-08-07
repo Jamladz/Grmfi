@@ -4,6 +4,7 @@ import { Award, CheckCircle2, Lock, Sparkles, Trophy, Users, Wallet, Zap, Shield
 import { doc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useTonWallet } from '@tonconnect/ui-react';
+import { awardXP } from '../lib/levelSystem';
 
 export interface Achievement {
   id: string;
@@ -160,6 +161,7 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
         [`claimedAchievements.${achievement.id}`]: true,
         lastActiveAt: serverTimestamp(),
       });
+      await awardXP(auth.currentUser.uid, 60);
     } catch (err) {
       console.error('Failed to claim achievement reward:', err);
     } finally {

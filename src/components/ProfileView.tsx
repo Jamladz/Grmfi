@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { User, Shield, Award, Wallet, ChevronRight, Trophy } from 'lucide-react';
+import { User, Shield, Award, Wallet, ChevronRight, Trophy, Zap, Star, FileText } from 'lucide-react';
 import { TOKENS } from '../data/tokens';
 import { AchievementsModal } from './AchievementsModal';
+import { RanksModal } from './RanksModal';
+import { WhitepaperModal } from './WhitepaperModal';
+import { getUserTotalXp, getUserLevelInfo } from '../lib/levelSystem';
 
 interface ProfileViewProps {
   balances: Record<string, number>;
@@ -11,6 +14,8 @@ interface ProfileViewProps {
 
 export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile }) => {
   const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
+  const [isRanksOpen, setIsRanksOpen] = useState(false);
+  const [isWhitepaperOpen, setIsWhitepaperOpen] = useState(false);
 
   const rawUsername = userProfile?.username || userProfile?.telegramUsername || 'user';
   const displayUsername = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
@@ -20,6 +25,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
     .filter(Boolean) as typeof TOKENS;
 
   const realBalances = userProfile?.realBalances || { GRMF: 0 };
+
+  // Calculate user total XP and level details
+  const totalXp = getUserTotalXp(userProfile);
+  const levelInfo = getUserLevelInfo(totalXp);
+  const { currentRank, nextRank, isMaxLevel, progressPercentage, xpCurrentLevel, xpNeededForNext } = levelInfo;
 
   // Calculate unclaimed achievements count for badge
   const inviteCount = userProfile?.inviteCount || (userProfile?.invitedUsers?.length || 0);
@@ -45,7 +55,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
     <motion.div 
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="flex flex-col gap-6"
+      className="flex flex-col gap-5"
     >
       {/* Profile Header */}
       <div className="flex flex-col items-center text-center px-4">
@@ -59,21 +69,81 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
               )}
             </div>
           </div>
-          <div className="absolute -bottom-1 -right-1 bg-emerald-500 p-1.5 rounded-full border-2 border-white shadow-lg">
-            <Shield className="w-3 h-3 text-white" />
+          <div className="absolute -bottom-1 -right-1 bg-amber-500 p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-xs">
+            <span>{currentRank.badgeIcon}</span>
           </div>
         </div>
 
-        <h2 className="mt-4 text-xl font-black text-slate-900 tracking-tight">
+        <h2 className="mt-3 text-xl font-black text-slate-900 tracking-tight">
           {displayUsername}
         </h2>
-        <div className="flex items-center gap-1.5 mt-1">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 px-2 py-0.5 rounded-full">
-            Verified User
+
+        {/* Dynamic Level & Rank Badge */}
+        <div className="flex items-center gap-2 mt-1.5">
+          <span className={`text-[11px] font-black px-3 py-0.5 rounded-full border shadow-sm flex items-center gap-1 ${currentRank.badgeBg}`}>
+            <span>{currentRank.badgeIcon}</span>
+            <span>Level {currentRank.level} • {currentRank.name}</span>
           </span>
-          <span className="text-[10px] font-bold text-[#24A1DE] bg-blue-50 px-2 py-0.5 rounded-full">
-            Level 12
-          </span>
+        </div>
+      </div>
+
+      {/* Level XP Progress Card */}
+      <div 
+        onClick={() => setIsRanksOpen(true)}
+        className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-3.5 sm:p-4 border border-slate-800 shadow-lg cursor-pointer hover:border-amber-400/50 transition-all group relative overflow-hidden active:scale-[0.99]"
+      >
+        <div className="absolute top-0 right-0 w-28 h-28 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
+
+        <div className="flex items-center justify-between mb-2.5 relative z-10">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 font-bold text-base shrink-0 shadow-inner">
+              {currentRank.badgeIcon}
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-black uppercase tracking-wider text-amber-400">
+                  Level {currentRank.level}
+                </span>
+                <span className="text-[9px] font-bold text-slate-300 uppercase tracking-wider bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700/80">
+                  {currentRank.name}
+                </span>
+              </div>
+              <p className="text-[9.5px] text-slate-400 font-medium line-clamp-1">
+                {currentRank.description}
+              </p>
+            </div>
+          </div>
+
+          <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-amber-400 group-hover:translate-x-0.5 transition-all shrink-0" />
+        </div>
+
+        {/* Compact Progress Bar */}
+        <div className="space-y-1 relative z-10">
+          <div className="flex items-center justify-between text-[10px] font-bold">
+            <span className="text-slate-300 flex items-center gap-1">
+              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <span>{totalXp.toLocaleString()} XP</span>
+            </span>
+            <span className="text-amber-400">
+              {isMaxLevel ? 'MAX' : `${Math.round(progressPercentage)}%`}
+            </span>
+          </div>
+
+          <div className="w-full h-2 bg-slate-800 rounded-full p-0.5 border border-slate-700/70 overflow-hidden">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${progressPercentage}%` }}
+              transition={{ duration: 1, ease: 'easeOut' }}
+              className={`h-full rounded-full bg-gradient-to-r ${currentRank.color} shadow-sm`}
+            />
+          </div>
+
+          <div className="flex justify-between items-center text-[9px] text-slate-400 font-medium">
+            <span>Next: {nextRank.name} ({nextRank.badgeIcon})</span>
+            <span>
+              {isMaxLevel ? 'Max Rank' : `${xpCurrentLevel}/${xpNeededForNext} XP`}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -123,18 +193,43 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
       {/* Menu Options */}
       <div className="flex flex-col gap-2">
         <MenuButton 
+          icon={<Star className="w-4 h-4 text-amber-500" />} 
+          label="Wealth Tiers & Ranks" 
+          badge={`Level ${currentRank.level}`}
+          onClick={() => setIsRanksOpen(true)}
+        />
+        <MenuButton 
           icon={<Trophy className="w-4 h-4 text-amber-500" />} 
           label="Achievements" 
           badge={readyCount > 0 ? `${readyCount} Ready` : undefined}
           onClick={() => setIsAchievementsOpen(true)}
         />
+        <MenuButton 
+          icon={<FileText className="w-4 h-4 text-indigo-500" />} 
+          label="Project Whitepaper" 
+          badge="v2.4"
+          onClick={() => setIsWhitepaperOpen(true)}
+        />
       </div>
+
+      {/* Ranks Modal */}
+      <RanksModal
+        isOpen={isRanksOpen}
+        onClose={() => setIsRanksOpen(false)}
+        userProfile={userProfile}
+      />
 
       {/* Achievements Modal */}
       <AchievementsModal 
         isOpen={isAchievementsOpen} 
         onClose={() => setIsAchievementsOpen(false)} 
         userProfile={userProfile} 
+      />
+
+      {/* Whitepaper Modal */}
+      <WhitepaperModal
+        isOpen={isWhitepaperOpen}
+        onClose={() => setIsWhitepaperOpen(false)}
       />
     </motion.div>
   );

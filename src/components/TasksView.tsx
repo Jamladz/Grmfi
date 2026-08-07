@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, TrendingUp, Users, Calendar, Box, Sparkles, Zap, Timer, Loader2, ChevronRight } from 'lucide-react';
-import { doc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, increment, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
+import { DailyBoxModal } from './DailyBoxModal';
+import { awardXP } from '../lib/levelSystem';
 
 interface Task {
   id: string;
@@ -41,6 +43,7 @@ interface TasksViewProps {
 export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView }) => {
   const [tasksState, setTasksState] = useState<Record<string, TaskState>>({});
   const [timeLeft, setTimeLeft] = useState<Record<string, string>>({});
+  const [isDailyBoxModalOpen, setIsDailyBoxModalOpen] = useState(false);
 
   useEffect(() => {
     if (userProfile?.taskProgress) {
@@ -83,10 +86,69 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     return () => clearInterval(timer);
   }, [tasksState]);
 
+  const handleClaimDailyBox = async () => {
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId) return;
+    const userRef = doc(db, 'users', targetId);
+
+    const now = Date.now();
+    const nextDay = new Date();
+    nextDay.setUTCHours(24, 0, 0, 0);
+
+    try {
+      await setDoc(userRef, {
+        realBalances: {
+          GRMF: increment(1)
+        },
+        betaBalances: {
+          GRMF: increment(1)
+        },
+        taskProgress: {
+          'daily-box': {
+            status: 'completed',
+            lastCompletedAt: serverTimestamp(),
+            nextAvailableAt: nextDay
+          }
+        }
+      }, { merge: true });
+    } catch (err) {
+      console.warn("setDoc claim failed, attempting updateDoc fallback:", err);
+      try {
+        await updateDoc(userRef, {
+          'realBalances.GRMF': increment(1),
+          'betaBalances.GRMF': increment(1),
+          'taskProgress.daily-box.status': 'completed',
+          'taskProgress.daily-box.lastCompletedAt': serverTimestamp(),
+          'taskProgress.daily-box.nextAvailableAt': nextDay,
+        });
+      } catch (e) {
+        console.error("updateDoc claim fallback error:", e);
+      }
+    }
+
+    setTasksState(prev => ({
+      ...prev,
+      'daily-box': {
+        status: 'completed',
+        lastCompletedAt: now,
+        nextAvailableAt: nextDay.getTime()
+      }
+    }));
+
+    // Award 50 XP for daily box claim
+    await awardXP(targetId, 50);
+  };
+
   const handleTaskAction = async (task: Task) => {
-    if (!auth.currentUser) return;
+    if (task.id === 'daily-box') {
+      setIsDailyBoxModalOpen(true);
+      return;
+    }
+
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId) return;
     const currentState = tasksState[task.id] || { status: 'idle' };
-    const userRef = doc(db, 'users', auth.currentUser.uid);
+    const userRef = doc(db, 'users', targetId);
 
     if (currentState.status === 'idle') {
       // Execute Action
@@ -121,6 +183,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       }
 
       await updateDoc(userRef, updateData);
+      await awardXP(targetId, 40);
       
       setTasksState(prev => ({
         ...prev,
@@ -160,7 +223,14 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
               return (
                 <div 
                   key={task.id}
+                  onClick={() => {
+                    if (task.id === 'daily-box') {
+                      setIsDailyBoxModalOpen(true);
+                    }
+                  }}
                   className={`flex items-center justify-between p-4 rounded-3xl border transition-all ${
+                    task.id === 'daily-box' ? 'cursor-pointer hover:border-amber-200' : ''
+                  } ${
                     isCompleted ? 'bg-slate-50 border-slate-100 opacity-75' : 'bg-white border-slate-100 shadow-sm'
                   }`}
                 >
@@ -185,8 +255,11 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
                   </div>
 
                   <button
-                    disabled={isCompleted || isChecking}
-                    onClick={() => handleTaskAction(task)}
+                    disabled={isCompleted && task.id !== 'daily-box' || isChecking}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleTaskAction(task);
+                    }}
                     className={`min-w-[80px] h-10 px-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
                       isCompleted 
                         ? 'bg-slate-100 text-slate-400 cursor-default'
@@ -216,6 +289,15 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
           </div>
         </div>
       ))}
+
+      <DailyBoxModal
+        isOpen={isDailyBoxModalOpen}
+        onClose={() => setIsDailyBoxModalOpen(false)}
+        isClaimed={tasksState['daily-box']?.status === 'completed' && !!timeLeft['daily-box']}
+        timeLeft={timeLeft['daily-box']}
+        onClaim={handleClaimDailyBox}
+        rewardValue={1}
+      />
     </motion.div>
   );
 };

@@ -30,6 +30,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
 import { extractAndStoreReferralCode, processReferral, syncReferralsForUser } from './lib/referrals';
+import { awardXP } from './lib/levelSystem';
 
 // Immediately capture referral start parameter from Telegram on script load
 extractAndStoreReferralCode();
@@ -91,21 +92,43 @@ function App() {
     tgUser?.first_name ? `${tgUser.first_name}${tgUser.last_name ? ' ' + tgUser.last_name : ''}`.trim() : null
   );
 
-  const [userProfile, setUserProfile] = useState<any>(instantTgUsername ? {
-    username: instantTgUsername,
-    telegramUsername: instantTgUsername,
-    photoUrl: tgUser?.photo_url || null,
-    telegramId: tgUser?.id || null,
-  } : null);
-  const [balances, setBalances] = useState<Record<string, number>>({
-    GRAM: 0,
-    GRMF: 0,
-    USDT: 0,
-    NOT: 0,
-    DOGS: 0,
-    HMSTR: 0
+  // Hydrate initial state from localStorage cache to prevent zero flash on restart
+  const [userProfile, setUserProfile] = useState<any>(() => {
+    try {
+      const cached = localStorage.getItem('grmf_cached_profile');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return {
+          ...parsed,
+          username: instantTgUsername || parsed.username,
+          telegramUsername: instantTgUsername || parsed.telegramUsername
+        };
+      }
+    } catch (e) {}
+    return instantTgUsername ? {
+      username: instantTgUsername,
+      telegramUsername: instantTgUsername,
+      photoUrl: tgUser?.photo_url || null,
+      telegramId: tgUser?.id || null,
+    } : null;
   });
-  const [realGrmf, setRealGrmf] = useState<number>(0);
+
+  const [balances, setBalances] = useState<Record<string, number>>(() => {
+    try {
+      const cached = localStorage.getItem('grmf_cached_balances');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return { GRAM: 0, GRMF: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 };
+  });
+
+  const [realGrmf, setRealGrmf] = useState<number>(() => {
+    try {
+      const cached = localStorage.getItem('grmf_cached_real_grmf');
+      if (cached) return parseFloat(cached) || 0;
+    } catch (e) {}
+    return 0;
+  });
+
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [referralBonusModal, setReferralBonusModal] = useState<{
     show: boolean;
@@ -124,18 +147,76 @@ function App() {
   const sanitizedTgUsername = rawTgUsername.toLowerCase().replace(/^@/, '').trim();
   const isAdmin = sanitizedTgUsername === 'sekanedr_is' || auth.currentUser?.email === 'sekanedrmessaif@gmail.com';
 
+  // Helper function: Resolve permanent, immutable user document ID across reloads
+  const resolveUserDocId = async (user: any): Promise<string> => {
+    const currentTgId = tgUser?.id ? String(tgUser.id) : null;
+    const storedDocId = localStorage.getItem('grmf_persistent_doc_id');
+
+    // 1. Telegram WebApp context (permanent tg_ID)
+    if (currentTgId) {
+      const tgDocId = `tg_${currentTgId}`;
+      const tgDocRef = doc(db, 'users', tgDocId);
+      
+      try {
+        const tgSnap = await getDoc(tgDocRef);
+        if (tgSnap.exists()) {
+          localStorage.setItem('grmf_persistent_doc_id', tgDocId);
+          return tgDocId;
+        }
+
+        // Search existing Firestore documents by telegramId
+        const usersCol = collection(db, 'users');
+        const qNum = query(usersCol, where('telegramId', '==', Number(currentTgId)));
+        const snapNum = await getDocs(qNum);
+        if (!snapNum.empty) {
+          const foundId = snapNum.docs[0].id;
+          localStorage.setItem('grmf_persistent_doc_id', foundId);
+          return foundId;
+        }
+
+        const qStr = query(usersCol, where('telegramId', '==', currentTgId));
+        const snapStr = await getDocs(qStr);
+        if (!snapStr.empty) {
+          const foundId = snapStr.docs[0].id;
+          localStorage.setItem('grmf_persistent_doc_id', foundId);
+          return foundId;
+        }
+      } catch (e) {
+        console.warn("Telegram account resolution check failed:", e);
+      }
+
+      localStorage.setItem('grmf_persistent_doc_id', tgDocId);
+      return tgDocId;
+    }
+
+    // 2. Web browser context
+    if (storedDocId) {
+      try {
+        const storedSnap = await getDoc(doc(db, 'users', storedDocId));
+        if (storedSnap.exists()) {
+          return storedDocId;
+        }
+      } catch (e) {}
+    }
+
+    const finalId = storedDocId || user.uid;
+    localStorage.setItem('grmf_persistent_doc_id', finalId);
+    return finalId;
+  };
+
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const detectedUsername = instantTgUsername;
-        const userRef = doc(db, 'users', user.uid);
+        const userDocId = await resolveUserDocId(user);
+        const userRef = doc(db, 'users', userDocId);
 
-        // IMMEDIATE CHECK: Fast path for Welcome Bonus
+        // FAST CHECK for Welcome Bonus modal
         try {
           const fastSnap = await getDoc(userRef);
           if (fastSnap.exists()) {
             const data = fastSnap.data();
-            if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${user.uid}`)) {
+            if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
               setShowWelcomeModal(true);
             }
           } else {
@@ -150,20 +231,26 @@ function App() {
         const unsubProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
-            setUserProfile((prev: any) => ({ ...prev, ...data }));
+            const fullProfile = { id: userDocId, ...data };
+            setUserProfile(fullProfile);
             setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
             setRealGrmf(data.realBalances?.GRMF || 0);
+
+            // Persist locally for instant loading upon re-entry
+            try {
+              localStorage.setItem('grmf_cached_profile', JSON.stringify(fullProfile));
+              localStorage.setItem('grmf_cached_balances', JSON.stringify(data.betaBalances || {}));
+              localStorage.setItem('grmf_cached_real_grmf', String(data.realBalances?.GRMF || 0));
+            } catch (e) {}
 
             // 1. Activity Persistence: Track last active and Daily login bonus
             const now = Date.now();
             const lastActive = data.lastActiveTimestamp || 0;
             const lastLoginBonusAt = data.lastLoginBonusTimestamp || 0;
             
-            // Check if it's a new day for Daily Login Reward (Activity saving)
             const isNewDay = new Date(now).toDateString() !== new Date(lastLoginBonusAt).toDateString();
             
             if (isNewDay && data.hasCollectedWelcomeBonus) {
-              // Automatically award daily login reward if user is returning
               updateDoc(userRef, {
                 'realBalances.GRMF': increment(DAILY_REWARD_REAL),
                 lastLoginBonusTimestamp: now,
@@ -172,26 +259,25 @@ function App() {
               });
               console.log("Daily reward credited for returning user!");
             } else if (now - lastActive > 5 * 60 * 1000) { 
-              // Periodically update lastActiveAt every 5 minutes
               updateDoc(userRef, {
                 lastActiveAt: serverTimestamp(),
                 lastActiveTimestamp: now
               });
             }
 
-            // Automatically update username in Firestore if detected from Telegram and missing/placeholder
+            // Automatically update username in Firestore if detected from Telegram
             if (detectedUsername && (!data.username || data.username.startsWith('user_') || data.telegramUsername !== detectedUsername)) {
               setDoc(userRef, {
                 username: detectedUsername,
                 telegramUsername: detectedUsername,
-                telegramId: tgUser?.id || null,
+                telegramId: tgUser?.id || data.telegramId || null,
                 photoUrl: tgUser?.photo_url || data.photoUrl || null
               }, { merge: true });
             }
             
             // Process referral if pending
             if (!data.hasProcessedReferral) {
-              processReferral(user.uid, data, tgUser).then((res) => {
+              processReferral(userDocId, data, tgUser).then((res) => {
                 if (res && res.success && res.reward) {
                   setReferralBonusModal({
                     show: true,
@@ -204,7 +290,7 @@ function App() {
             } else if (
               data.referralBonusReceived && 
               !data.hasSeenReferralRewardModal && 
-              !localStorage.getItem(`seen_ref_modal_${user.uid}`)
+              !localStorage.getItem(`seen_ref_modal_${userDocId}`)
             ) {
               setReferralBonusModal({
                 show: true,
@@ -215,17 +301,17 @@ function App() {
             }
 
             // Sync referrals in background for referrer
-            syncReferralsForUser(user.uid, data);
+            syncReferralsForUser(userDocId, data);
 
-            // Welcome Bonus logic (taken once upon registration)
-            if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${user.uid}`)) {
+            // Welcome Bonus logic
+            if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
               setShowWelcomeModal(true);
             } else {
               setShowWelcomeModal(false);
             }
           } else {
-            // Create initial profile with Telegram data
-            const finalUsername = detectedUsername || ('user_' + user.uid.slice(0, 5));
+            // Create initial profile with Telegram data using persistent userDocId
+            const finalUsername = detectedUsername || ('user_' + userDocId.slice(-6));
             const initialData = {
               username: finalUsername,
               telegramUsername: detectedUsername || null,
@@ -244,7 +330,7 @@ function App() {
               hasProcessedReferral: false
             };
             setDoc(userRef, initialData).then(() => {
-              processReferral(user.uid, initialData, tgUser).then((res) => {
+              processReferral(userDocId, initialData, tgUser).then((res) => {
                 if (res && res.success && res.reward) {
                   setReferralBonusModal({
                     show: true,
@@ -255,7 +341,7 @@ function App() {
                 }
               });
             });
-            if (!localStorage.getItem(`bonus_collected_${user.uid}`)) {
+            if (!localStorage.getItem(`bonus_collected_${userDocId}`)) {
               setShowWelcomeModal(true);
             }
           }
@@ -270,22 +356,22 @@ function App() {
   }, []);
 
   const dismissReferralModal = () => {
-    if (auth.currentUser) {
-      const uid = auth.currentUser.uid;
-      localStorage.setItem(`seen_ref_modal_${uid}`, 'true');
-      const userRef = doc(db, 'users', uid);
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (targetId) {
+      localStorage.setItem(`seen_ref_modal_${targetId}`, 'true');
+      const userRef = doc(db, 'users', targetId);
       updateDoc(userRef, { hasSeenReferralRewardModal: true }).catch(() => {});
     }
     setReferralBonusModal(null);
   };
 
   const collectWelcomeBonus = async () => {
-    if (!auth.currentUser) return;
-    const uid = auth.currentUser.uid;
-    const userRef = doc(db, 'users', uid);
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId) return;
+    const userRef = doc(db, 'users', targetId);
     
     // Save locally immediately to avoid any re-trigger
-    localStorage.setItem(`bonus_collected_${uid}`, 'true');
+    localStorage.setItem(`bonus_collected_${targetId}`, 'true');
 
     // Optimistic UI updates
     const updatedBeta = { ...balances, GRMF: (balances.GRMF || 0) + WELCOME_REWARD };
@@ -327,8 +413,9 @@ function App() {
         setTxHash('0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6));
         
         // Update Firestore beta balances and give small REAL reward for activity
-        if (auth.currentUser) {
-          const userRef = doc(db, 'users', auth.currentUser.uid);
+        const targetId = userProfile?.id || auth.currentUser?.uid;
+        if (targetId) {
+          const userRef = doc(db, 'users', targetId);
           const fAmt = parseFloat(fromAmount);
           const tAmt = parseFloat(toAmount);
           
@@ -347,6 +434,8 @@ function App() {
             lastActiveAt: serverTimestamp(),
             lastActiveTimestamp: Date.now()
           });
+
+          await awardXP(targetId, 30);
         }
       }, 2000);
     }, 1500);
@@ -376,8 +465,9 @@ function App() {
   const toAmount = fromAmount ? (parseFloat(fromAmount) * (fromToken.priceUsd / toToken.priceUsd)).toFixed(2) : '';
   
   const handleOpenChest = async (chestId: string, rewards: { symbol: string, amount: number }) => {
-    if (!auth.currentUser) return;
-    const userRef = doc(db, 'users', auth.currentUser.uid);
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId) return;
+    const userRef = doc(db, 'users', targetId);
     if (rewards.symbol === 'GRMF') {
       await updateDoc(userRef, {
         'betaBalances.GRMF': increment(rewards.amount),
@@ -393,8 +483,9 @@ function App() {
   };
 
   const handleClaimUnclaimedReferrals = async () => {
-    if (!auth.currentUser) return;
-    const userRef = doc(db, 'users', auth.currentUser.uid);
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId) return;
+    const userRef = doc(db, 'users', targetId);
     const unclaimed = userProfile?.unclaimedReferralRewards || 0;
     if (unclaimed <= 0) return;
 
@@ -624,11 +715,11 @@ function App() {
                 </div>
 
                 <h3 className="text-2xl font-black text-slate-900 tracking-tight leading-tight mb-2">
-                  🎉 مكافأة الإحالة!
+                  🎉 Referral Bonus!
                 </h3>
                 
                 <p className="text-xs text-slate-600 font-medium px-2 mb-5 leading-relaxed">
-                  لقد انضممت بنجاح عبر رابط إحالة من <strong className="text-slate-900 font-bold">@{referralBonusModal.referrerName}</strong>!
+                  You joined successfully via referral link from <strong className="text-slate-900 font-bold">@{referralBonusModal.referrerName}</strong>!
                 </p>
 
                 <div className="w-full bg-gradient-to-br from-slate-50 to-amber-50/40 border border-amber-200/60 p-5 rounded-[28px] mb-6 relative">
@@ -647,7 +738,7 @@ function App() {
                     </span>
                   )}
                   <span className="text-[10px] text-emerald-600 font-bold block mt-2">
-                    ✓ تمت إضافة المكافأة إلى رصيدك بنجاح!
+                    ✓ Reward added to your balance successfully!
                   </span>
                 </div>
 
@@ -655,7 +746,7 @@ function App() {
                   onClick={dismissReferralModal}
                   className="w-full py-4 rounded-[22px] bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-white font-black uppercase tracking-widest text-xs shadow-xl shadow-amber-500/25 transition-all active:scale-[0.96]"
                 >
-                  استلام واستمرار 🚀
+                  Claim & Continue 🚀
                 </button>
               </div>
             </motion.div>

@@ -627,8 +627,8 @@ export const ReferralHub: React.FC<ReferralHubProps> = ({
 
                     <div className="flex items-center justify-center gap-3">
                       {getIconForSymbol(wonReward.symbol) && (
-                        <div className="w-12 h-12 rounded-2xl bg-white shadow-md p-1.5 flex items-center justify-center">
-                          <img src={getIconForSymbol(wonReward.symbol)} alt={wonReward.symbol} className="w-full h-full object-contain" />
+                        <div className="w-12 h-12 rounded-full bg-white shadow-md border-2 border-amber-300 p-1 flex items-center justify-center shrink-0 overflow-hidden ring-2 ring-amber-400/20">
+                          <img src={getIconForSymbol(wonReward.symbol)} alt={wonReward.symbol} className="w-full h-full object-cover rounded-full" />
                         </div>
                       )}
                       <div className="text-left">
@@ -650,7 +650,9 @@ export const ReferralHub: React.FC<ReferralHubProps> = ({
                       {selectedChest.rewards.map((r, i) => (
                         <div key={i} className="bg-white p-2.5 rounded-2xl border border-slate-100 flex flex-col items-center">
                           {getIconForSymbol(r.symbol) && (
-                            <img src={getIconForSymbol(r.symbol)} alt={r.symbol} className="w-6 h-6 object-contain mb-1" />
+                            <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 p-0.5 flex items-center justify-center mb-1 overflow-hidden shrink-0">
+                              <img src={getIconForSymbol(r.symbol)} alt={r.symbol} className="w-full h-full object-cover rounded-full" />
+                            </div>
                           )}
                           <span className="text-[10px] font-black text-slate-900">{r.name}</span>
                         </div>
