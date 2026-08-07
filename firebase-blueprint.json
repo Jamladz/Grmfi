@@ -7,6 +7,7 @@
           "fields": {
             "username": "string",
             "telegramUsername": "string?",
+            "firstName": "string?",
             "telegramId": "number?",
             "points": "number",
             "rank": "number",
@@ -19,7 +20,8 @@
             "lastCheckIn": "timestamp?",
             "betaBalances": "map",
             "realBalances": "map",
-            "openedChests": "string[]"
+            "openedChests": "string[]",
+            "taskProgress": "map"
           }
         }
       }
@@ -45,6 +47,36 @@
             "referrerId": "string",
             "referredId": "string",
             "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "transactions": {
+      "description": "Transaction logs for all token rewards and distributions",
+      "documents": {
+        "{txId}": {
+          "fields": {
+            "id": "string",
+            "userId": "string",
+            "telegramId": "string?",
+            "username": "string",
+            "source": "string",
+            "rewardSource": "string",
+            "amount": "number",
+            "timestamp": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "global": {
+      "description": "Global app parameters and distributed asset metrics",
+      "documents": {
+        "assets": {
+          "fields": {
+            "totalDistributedTokens": "number",
+            "totalRewardCount": "number",
+            "lastUpdatedAt": "timestamp"
           }
         }
       }

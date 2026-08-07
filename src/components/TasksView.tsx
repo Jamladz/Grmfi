@@ -5,6 +5,7 @@ import { doc, updateDoc, setDoc, increment, serverTimestamp } from 'firebase/fir
 import { db, auth } from '../lib/firebase';
 import { DailyBoxModal } from './DailyBoxModal';
 import { awardXP } from '../lib/levelSystem';
+import { grantReward } from '../lib/rewardsEngine';
 
 interface Task {
   id: string;
@@ -135,9 +136,17 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
   const handleClaimDailyBox = async () => {
     const targetId = userProfile?.id || auth.currentUser?.uid;
     if (!targetId) return;
-    const userRef = doc(db, 'users', targetId);
 
+    const state = tasksState['daily-box'];
     const now = Date.now();
+    const nextMs = parseTimestampMs(state?.nextAvailableAt);
+
+    // Prevent double claim if in 24h cooldown
+    if (nextMs && nextMs > now) {
+      console.warn("Daily box is currently in 24h cooldown");
+      return;
+    }
+
     // Exactly 24 hours countdown from moment of claim
     const nextAvailable = new Date(now + 24 * 60 * 60 * 1000);
 
@@ -151,32 +160,106 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       }
     }));
 
-    // Firestore persistence using dot-notation to avoid wiping taskProgress map
-    try {
-      await updateDoc(userRef, {
-        'realBalances.GRMF': increment(1),
-        'betaBalances.GRMF': increment(1),
-        'taskProgress.daily-box.status': 'completed',
-        'taskProgress.daily-box.lastCompletedAt': serverTimestamp(),
-        'taskProgress.daily-box.nextAvailableAt': nextAvailable,
-      });
-    } catch (err) {
-      console.warn("updateDoc failed, using setDoc with merge:", err);
-      await setDoc(userRef, {
-        realBalances: { GRMF: increment(1) },
-        betaBalances: { GRMF: increment(1) },
-        taskProgress: {
-          'daily-box': {
-            status: 'completed',
-            lastCompletedAt: serverTimestamp(),
-            nextAvailableAt: nextAvailable
-          }
+    // Unified Reward Distribution
+    await grantReward({
+      userId: targetId,
+      telegramId: userProfile?.telegramId,
+      username: userProfile?.username || userProfile?.telegramUsername,
+      firstName: userProfile?.firstName,
+      source: 'task_daily-box',
+      amount: 1,
+      balanceType: 'both',
+      extraUserUpdates: {
+        [`taskProgress.daily-box.status`]: 'completed',
+        [`taskProgress.daily-box.lastCompletedAt`]: serverTimestamp(),
+        [`taskProgress.daily-box.nextAvailableAt`]: nextAvailable
+      }
+    });
+
+    // Explicitly save the task progress via setDoc merge
+    const userRef = doc(db, 'users', targetId);
+    await setDoc(userRef, {
+      realBalances: { GRMF: increment(1) },
+      betaBalances: { GRMF: increment(1) },
+      taskProgress: {
+        'daily-box': {
+          status: 'completed',
+          lastCompletedAt: serverTimestamp(),
+          nextAvailableAt: nextAvailable
         }
-      }, { merge: true });
-    }
+      }
+    }, { merge: true });
 
     // Award XP
     await awardXP(targetId, 50);
+  };
+
+  const executeTaskClaim = async (task: Task) => {
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId) return;
+
+    const now = Date.now();
+    const nextAvailable = task.isDaily ? new Date(now + 24 * 60 * 60 * 1000) : undefined;
+
+    // 1. Optimistic UI update
+    setTasksState(prev => ({
+      ...prev,
+      [task.id]: {
+        status: 'completed',
+        lastCompletedAt: now,
+        nextAvailableAt: task.isDaily && nextAvailable ? nextAvailable.getTime() : undefined
+      }
+    }));
+
+    // Trigger Telegram haptic feedback if available
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg?.HapticFeedback) {
+      tg.HapticFeedback.notificationOccurred('success');
+    }
+
+    // 2. Prepare structured extraUserUpdates
+    const extraUpdates: Record<string, any> = {
+      [`taskProgress.${task.id}.status`]: 'completed',
+      [`taskProgress.${task.id}.lastCompletedAt`]: serverTimestamp()
+    };
+    if (task.isDaily && nextAvailable) {
+      extraUpdates[`taskProgress.${task.id}.nextAvailableAt`] = nextAvailable;
+    }
+
+    // 3. Grant reward through Unified Engine
+    try {
+      await grantReward({
+        userId: targetId,
+        telegramId: userProfile?.telegramId,
+        username: userProfile?.username || userProfile?.telegramUsername,
+        firstName: userProfile?.firstName,
+        source: `task_${task.id}`,
+        amount: task.rewardValue,
+        balanceType: 'both',
+        extraUserUpdates: extraUpdates
+      });
+      
+      // Explicitly save the task progress via setDoc merge to guarantee it persists independently
+      const userRef = doc(db, 'users', targetId);
+      const explicitUpdates: any = {
+        realBalances: { GRMF: increment(task.rewardValue) },
+        betaBalances: { GRMF: increment(task.rewardValue) },
+        taskProgress: {
+          [task.id]: {
+            status: 'completed',
+            lastCompletedAt: serverTimestamp()
+          }
+        }
+      };
+      if (task.isDaily && nextAvailable) {
+        explicitUpdates.taskProgress[task.id].nextAvailableAt = nextAvailable;
+      }
+      await setDoc(userRef, explicitUpdates, { merge: true });
+
+      await awardXP(targetId, 40);
+    } catch (err) {
+      console.error(`Failed to claim task ${task.id}:`, err);
+    }
   };
 
   const handleTaskAction = async (task: Task) => {
@@ -188,88 +271,35 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     const targetId = userProfile?.id || auth.currentUser?.uid;
     if (!targetId) return;
     const currentState = tasksState[task.id] || { status: 'idle' };
-    const userRef = doc(db, 'users', targetId);
+    const now = Date.now();
 
-    if (currentState.status === 'idle') {
-      // Execute Action immediately
-      if (task.actionType === 'swap') {
-        setActiveView('swap');
-      } else if (task.actionType === 'link' && task.link) {
-        window.open(task.link, '_blank');
+    // Prevent claiming if one-time task already completed or daily task in cooldown
+    if (task.isDaily) {
+      const nextMs = parseTimestampMs(currentState.nextAvailableAt);
+      if (nextMs && nextMs > now) {
+        console.warn(`Task ${task.id} is in 24h cooldown`);
+        return;
       }
+    } else {
+      if (currentState.status === 'completed') {
+        console.warn(`One-time task ${task.id} is already permanently completed`);
+        return;
+      }
+    }
 
+    if (currentState.status === 'idle' || currentState.status === 'claimable') {
       setTasksState(prev => ({ ...prev, [task.id]: { ...prev[task.id], status: 'checking' } }));
       
       setTimeout(async () => {
-        setTasksState(prev => ({ ...prev, [task.id]: { ...prev[task.id], status: 'claimable' } }));
-        try {
-          await updateDoc(userRef, {
-            [`taskProgress.${task.id}.status`]: 'claimable'
-          });
-        } catch (err) {
-          await setDoc(userRef, {
-            taskProgress: {
-              [task.id]: { status: 'claimable' }
-            }
-          }, { merge: true });
+        await executeTaskClaim(task);
+        
+        // Execute Action if any AFTER task claim triggers
+        if (task.actionType === 'swap') {
+          setActiveView('swap');
+        } else if (task.actionType === 'link' && task.link) {
+          window.open(task.link, '_blank');
         }
-      }, 800);
-
-    } else if (currentState.status === 'claimable') {
-      const now = Date.now();
-      // Exactly 24 hours countdown from moment of claim
-      const nextAvailable = new Date(now + 24 * 60 * 60 * 1000);
-      
-      // 1. Optimistic UI update for instant feedback
-      setTasksState(prev => ({
-        ...prev,
-        [task.id]: {
-          status: 'completed',
-          lastCompletedAt: now,
-          nextAvailableAt: task.isDaily ? nextAvailable.getTime() : undefined
-        }
-      }));
-
-      // Trigger Telegram haptic feedback if available
-      const tg = (window as any).Telegram?.WebApp;
-      if (tg?.HapticFeedback) {
-        tg.HapticFeedback.notificationOccurred('success');
-      }
-
-      // 2. Persist to Firestore reliably using dot notation to preserve other task entries
-      try {
-        const updatePayload: Record<string, any> = {
-          'realBalances.GRMF': increment(task.rewardValue),
-          'betaBalances.GRMF': increment(task.rewardValue),
-          [`taskProgress.${task.id}.status`]: 'completed',
-          [`taskProgress.${task.id}.lastCompletedAt`]: serverTimestamp(),
-        };
-
-        if (task.isDaily) {
-          updatePayload[`taskProgress.${task.id}.nextAvailableAt`] = nextAvailable;
-        }
-
-        await updateDoc(userRef, updatePayload);
-        await awardXP(targetId, 40);
-      } catch (err) {
-        console.warn("updateDoc task claim failed, falling back to setDoc:", err);
-        try {
-          await setDoc(userRef, {
-            realBalances: { GRMF: increment(task.rewardValue) },
-            betaBalances: { GRMF: increment(task.rewardValue) },
-            taskProgress: {
-              [task.id]: {
-                status: 'completed',
-                lastCompletedAt: serverTimestamp(),
-                ...(task.isDaily ? { nextAvailableAt: nextAvailable } : {})
-              }
-            }
-          }, { merge: true });
-          await awardXP(targetId, 40);
-        } catch (e) {
-          console.error("Task claim persistence failed completely:", e);
-        }
-      }
+      }, 400);
     }
   };
 

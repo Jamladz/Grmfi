@@ -12,9 +12,9 @@ import {
   updateDoc, 
   increment, 
   arrayUnion, 
-  serverTimestamp,
-  runTransaction
+  serverTimestamp
 } from 'firebase/firestore';
+import { grantReward } from './rewardsEngine';
 
 const LOCAL_STORAGE_KEY = 'grmf_pending_referrer';
 
@@ -246,23 +246,35 @@ export const processReferral = async (
     const alreadyInList = existingInvited.some((u: any) => u.uid === currentUid || (currentTgId && u.telegramId === currentTgId));
 
     if (!alreadyInList) {
-      await updateDoc(referrerDocRef, {
-        'betaBalances.GRMF': increment(referrerReward),
-        'realBalances.GRMF': increment(referrerReward),
-        'referralEarnings.GRMF': increment(referrerReward),
-        inviteCount: increment(1),
-        invitedUsers: arrayUnion(newInvitedItem)
+      await grantReward({
+        userId: referrerDocId,
+        telegramId: referrerData.telegramId,
+        username: referrerData.username || referrerData.telegramUsername,
+        source: 'referral_referrer',
+        amount: referrerReward,
+        balanceType: 'both',
+        extraUserUpdates: {
+          'referralEarnings.GRMF': increment(referrerReward),
+          inviteCount: increment(1),
+          invitedUsers: arrayUnion(newInvitedItem)
+        }
       });
     }
 
     // 3. Update Referred Friend (Current User)
-    const currentUserRef = doc(db, 'users', currentUid);
-    await updateDoc(currentUserRef, {
-      referredBy: referrerDocId,
-      hasProcessedReferral: true,
-      referralBonusReceived: friendReward,
-      'betaBalances.GRMF': increment(friendReward),
-      'realBalances.GRMF': increment(friendReward)
+    await grantReward({
+      userId: currentUid,
+      telegramId: currentTgId,
+      username: newUsername,
+      firstName: tgUser?.first_name || currentUserData?.firstName || null,
+      source: 'referral_friend',
+      amount: friendReward,
+      balanceType: 'both',
+      extraUserUpdates: {
+        referredBy: referrerDocId,
+        hasProcessedReferral: true,
+        referralBonusReceived: friendReward
+      }
     });
 
     // 4. Cleanup localStorage
@@ -327,13 +339,18 @@ export const syncReferralsForUser = async (userUid: string, userProfile: any) =>
     });
 
     if (newItemsToAdd.length > 0) {
-      const userRef = doc(db, 'users', userUid);
-      await updateDoc(userRef, {
-        'betaBalances.GRMF': increment(newRewardsToGain),
-        'realBalances.GRMF': increment(newRewardsToGain),
-        'referralEarnings.GRMF': increment(newRewardsToGain),
-        inviteCount: increment(newItemsToAdd.length),
-        invitedUsers: arrayUnion(...newItemsToAdd)
+      await grantReward({
+        userId: userUid,
+        telegramId: tgId,
+        username: userProfile.username || userProfile.telegramUsername,
+        source: 'referral_sync',
+        amount: newRewardsToGain,
+        balanceType: 'both',
+        extraUserUpdates: {
+          'referralEarnings.GRMF': increment(newRewardsToGain),
+          inviteCount: increment(newItemsToAdd.length),
+          invitedUsers: arrayUnion(...newItemsToAdd)
+        }
       });
       console.log(`Synced ${newItemsToAdd.length} missing referrals for user ${userUid}`);
     }

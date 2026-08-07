@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { collection, onSnapshot, query, orderBy, getDocs, doc, setDoc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { grantReward } from '../lib/rewardsEngine';
 
 interface AdminViewProps {
   userProfile?: any;
@@ -45,26 +46,33 @@ export const AdminView: React.FC<AdminViewProps> = ({ userProfile }) => {
   const [customAwardAmount, setCustomAwardAmount] = useState<string>('50');
   const [awardSuccessMsg, setAwardSuccessMsg] = useState<string | null>(null);
   const [isAwarding, setIsAwarding] = useState(false);
+  const [globalAssets, setGlobalAssets] = useState<any>(null);
 
   const handleAwardTokens = async (targetUser: any, amount: number, balanceType: 'real' | 'beta' = 'real') => {
     if (!targetUser || !amount || amount <= 0) return;
     setIsAwarding(true);
     setAwardSuccessMsg(null);
     
-    const userRef = doc(db, 'users', targetUser.id);
     try {
-      await setDoc(userRef, {
-        [balanceType === 'real' ? 'realBalances' : 'betaBalances']: {
-          GRMF: increment(amount)
-        }
-      }, { merge: true });
+      const res = await grantReward({
+        userId: targetUser.id,
+        telegramId: targetUser.telegramId,
+        username: targetUser.username || targetUser.telegramUsername,
+        source: 'admin_award',
+        amount: amount,
+        balanceType: balanceType === 'real' ? 'real' : 'both'
+      });
 
-      setAwardSuccessMsg(`✅ +${amount} ${balanceType.toUpperCase()} GRMF awarded to ${targetUser.username}! Saved to Firestore.`);
-      setSelectedUserModal((prev: any) => prev ? {
-        ...prev,
-        realGrmf: balanceType === 'real' ? (prev.realGrmf || 0) + amount : prev.realGrmf,
-        betaGrmf: balanceType === 'beta' ? (prev.betaGrmf || 0) + amount : prev.betaGrmf,
-      } : null);
+      if (res.success) {
+        setAwardSuccessMsg(`✅ +${amount} GRMF awarded to ${targetUser.username}! Recorded in Global Assets & Transactions.`);
+        setSelectedUserModal((prev: any) => prev ? {
+          ...prev,
+          realGrmf: balanceType === 'real' ? (prev.realGrmf || 0) + amount : prev.realGrmf,
+          betaGrmf: balanceType === 'beta' ? (prev.betaGrmf || 0) + amount : prev.betaGrmf,
+        } : null);
+      } else {
+        setAwardSuccessMsg(`❌ Error: ${res.message || 'Failed to award tokens.'}`);
+      }
     } catch (err: any) {
       console.error("Admin reward failed:", err);
       setAwardSuccessMsg(`❌ Error: ${err.message || 'Failed to award tokens.'}`);
@@ -78,7 +86,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ userProfile }) => {
     setIsAwarding(true);
     setAwardSuccessMsg(null);
 
-    const userRef = doc(db, 'users', targetUser.id);
     const nextDay = new Date();
     nextDay.setUTCHours(24, 0, 0, 0);
 
@@ -93,14 +100,23 @@ export const AdminView: React.FC<AdminViewProps> = ({ userProfile }) => {
         };
       });
 
-      await setDoc(userRef, {
-        realBalances: {
-          GRMF: increment(10)
-        },
-        taskProgress: taskProgress
-      }, { merge: true });
+      const res = await grantReward({
+        userId: targetUser.id,
+        telegramId: targetUser.telegramId,
+        username: targetUser.username || targetUser.telegramUsername,
+        source: 'admin_approve_all_tasks',
+        amount: 10,
+        balanceType: 'both',
+        extraUserUpdates: {
+          taskProgress: taskProgress
+        }
+      });
 
-      setAwardSuccessMsg(`🎉 All tasks marked completed for ${targetUser.username}! (+10 GRMF added)`);
+      if (res.success) {
+        setAwardSuccessMsg(`🎉 All tasks marked completed for ${targetUser.username}! (+10 GRMF added)`);
+      } else {
+        setAwardSuccessMsg(`❌ Error: ${res.message || 'Failed to approve tasks.'}`);
+      }
     } catch (err: any) {
       console.error("Task approval failed:", err);
       setAwardSuccessMsg(`❌ Error: ${err.message || 'Failed to approve tasks.'}`);
@@ -212,9 +228,24 @@ export const AdminView: React.FC<AdminViewProps> = ({ userProfile }) => {
       }
     );
 
+    // 3. Listen to real-time global assets doc
+    const globalAssetsRef = doc(db, 'global', 'assets');
+    const unsubGlobal = onSnapshot(
+      globalAssetsRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setGlobalAssets(docSnap.data());
+        }
+      },
+      (err) => {
+        console.warn("Could not listen to /global/assets doc:", err);
+      }
+    );
+
     return () => {
       unsubUsers();
       unsubReferrals();
+      unsubGlobal();
     };
   }, []);
 
@@ -420,19 +451,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ userProfile }) => {
         {/* Total Real GRMF */}
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden group hover:border-indigo-200 transition-all">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Real GRMF Circulating</span>
+            <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Global Distributed Assets</span>
             <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
               <Coins className="w-4 h-4" />
             </div>
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-black text-slate-900 tracking-tight">
-              {isLoading ? '...' : totalRealGrmfCirculating.toLocaleString()}
+              {isLoading ? '...' : (globalAssets?.totalDistributedTokens ?? totalRealGrmfCirculating).toLocaleString()}
             </span>
             <span className="text-[10px] text-indigo-600 font-bold uppercase">GRMF</span>
           </div>
           <span className="text-[10px] text-slate-400 font-medium block mt-1">
-            Real Mainnet Balances
+            Global Assets Firestore Sync
           </span>
         </div>
       </div>

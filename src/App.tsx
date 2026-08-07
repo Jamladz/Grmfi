@@ -26,8 +26,10 @@ import {
   getDocs,
   runTransaction,
   getDoc,
-  increment
+  increment,
+  deleteField
 } from 'firebase/firestore';
+import { grantReward, flattenObjectToDotNotation } from './lib/rewardsEngine';
 import { auth, db } from './lib/firebase';
 import { extractAndStoreReferralCode, processReferral, syncReferralsForUser } from './lib/referrals';
 import { awardXP } from './lib/levelSystem';
@@ -53,6 +55,42 @@ import { TOKENS, POOLS } from './data/tokens';
 import { Token, TransactionState, WalletState } from './types';
 
 type ActiveView = 'swap' | 'tasks' | 'airdrop' | 'profile' | 'referrals' | 'admin';
+
+function normalizeAndSanitizeUserData(rawData: any) {
+  if (!rawData || typeof rawData !== 'object') return { data: rawData, dirty: false, keysToRemove: [] };
+  
+  // Create a shallow clone to avoid mutating the original Firestore snapshot directly
+  const data = { ...rawData };
+  let dirty = false;
+  const keysToRemove: string[] = [];
+
+  Object.keys(rawData).forEach(key => {
+    if (key.includes('.')) {
+      dirty = true;
+      keysToRemove.push(key);
+      const parts = key.split('.');
+      let target = data;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        if (!target[p] || typeof target[p] !== 'object') {
+          target[p] = {};
+        }
+        target = target[p];
+      }
+      const last = parts[parts.length - 1];
+      const val = rawData[key];
+
+      if (typeof val === 'number' && typeof target[last] === 'number') {
+        target[last] += val;
+      } else if (target[last] === undefined || target[last] === null) {
+        target[last] = val;
+      }
+      delete data[key];
+    }
+  });
+
+  return { data, dirty, keysToRemove };
+}
 
 function App() {
   const [tonConnectUI] = useTonConnectUI();
@@ -230,11 +268,31 @@ function App() {
 
         const unsubProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
-            const data = docSnap.data();
+            const rawData = docSnap.data();
+            const { data, dirty, keysToRemove } = normalizeAndSanitizeUserData(rawData);
             const fullProfile = { id: userDocId, ...data };
             setUserProfile(fullProfile);
             setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
             setRealGrmf(data.realBalances?.GRMF || 0);
+
+            // If corrupt/legacy dot keys were found in Firestore, repair document permanently
+            if (dirty) {
+              const cleanupPayload = keysToRemove.reduce((acc: any, k) => {
+                acc[k] = deleteField();
+                return acc;
+              }, {});
+
+              const repairPayload = {
+                ...flattenObjectToDotNotation({
+                  realBalances: data.realBalances || {},
+                  betaBalances: data.betaBalances || {},
+                  taskProgress: data.taskProgress || {}
+                }),
+                ...cleanupPayload
+              };
+
+              updateDoc(userRef, repairPayload).catch(err => console.warn("Auto-healing user doc failed:", err));
+            }
 
             // Persist locally for instant loading upon re-entry
             try {
@@ -251,11 +309,19 @@ function App() {
             const isNewDay = new Date(now).toDateString() !== new Date(lastLoginBonusAt).toDateString();
             
             if (isNewDay && data.hasCollectedWelcomeBonus) {
-              updateDoc(userRef, {
-                'realBalances.GRMF': increment(DAILY_REWARD_REAL),
-                lastLoginBonusTimestamp: now,
-                lastActiveAt: serverTimestamp(),
-                lastActiveTimestamp: now
+              grantReward({
+                userId: userDocId,
+                telegramId: tgUser?.id || data.telegramId,
+                username: data.username || data.telegramUsername,
+                firstName: tgUser?.first_name || data.firstName,
+                source: 'daily_login',
+                amount: DAILY_REWARD_REAL,
+                balanceType: 'both',
+                extraUserUpdates: {
+                  lastLoginBonusTimestamp: now,
+                  lastActiveAt: serverTimestamp(),
+                  lastActiveTimestamp: now
+                }
               });
               console.log("Daily reward credited for returning user!");
             } else if (now - lastActive > 5 * 60 * 1000) { 
@@ -265,13 +331,20 @@ function App() {
               });
             }
 
-            // Automatically update username in Firestore if detected from Telegram
-            if (detectedUsername && (!data.username || data.username.startsWith('user_') || data.telegramUsername !== detectedUsername)) {
+            // Automatically update Telegram User Info (username, firstName, telegramId) if changed in Telegram
+            const tgUsernameClean = tgUser?.username || null;
+            const tgFirstNameClean = tgUser?.first_name || null;
+            const tgIdClean = tgUser?.id || null;
+
+            if (tgUser && (
+              (tgUsernameClean && data.telegramUsername !== tgUsernameClean) ||
+              (tgFirstNameClean && data.firstName !== tgFirstNameClean) ||
+              (tgIdClean && data.telegramId !== tgIdClean)
+            )) {
               setDoc(userRef, {
-                username: detectedUsername,
-                telegramUsername: detectedUsername,
-                telegramId: tgUser?.id || data.telegramId || null,
-                photoUrl: tgUser?.photo_url || data.photoUrl || null
+                ...(tgUsernameClean ? { username: tgUsernameClean, telegramUsername: tgUsernameClean } : {}),
+                ...(tgFirstNameClean ? { firstName: tgFirstNameClean } : {}),
+                ...(tgIdClean ? { telegramId: tgIdClean } : {})
               }, { merge: true });
             }
             
@@ -368,7 +441,6 @@ function App() {
   const collectWelcomeBonus = async () => {
     const targetId = userProfile?.id || auth.currentUser?.uid;
     if (!targetId) return;
-    const userRef = doc(db, 'users', targetId);
     
     // Save locally immediately to avoid any re-trigger
     localStorage.setItem(`bonus_collected_${targetId}`, 'true');
@@ -380,11 +452,18 @@ function App() {
     setShowWelcomeModal(false);
 
     try {
-      await updateDoc(userRef, {
-        'realBalances.GRMF': increment(WELCOME_REWARD),
-        'betaBalances.GRMF': increment(WELCOME_REWARD),
-        hasCollectedWelcomeBonus: true,
-        lastLoginBonusTimestamp: Date.now()
+      await grantReward({
+        userId: targetId,
+        telegramId: userProfile?.telegramId,
+        username: userProfile?.username || userProfile?.telegramUsername,
+        firstName: userProfile?.firstName,
+        source: 'welcome_bonus',
+        amount: WELCOME_REWARD,
+        balanceType: 'both',
+        extraUserUpdates: {
+          hasCollectedWelcomeBonus: true,
+          lastLoginBonusTimestamp: Date.now()
+        }
       });
     } catch (error) {
       console.error("Error collecting bonus:", error);
@@ -429,11 +508,19 @@ function App() {
           // Reward small real GRMF for every swap to make it feel real
           const REAL_SWAP_REWARD = 0.5;
 
-          await updateDoc(userRef, { 
-            betaBalances: newBetaBalances,
-            'realBalances.GRMF': increment(REAL_SWAP_REWARD),
-            lastActiveAt: serverTimestamp(),
-            lastActiveTimestamp: Date.now()
+          await grantReward({
+            userId: targetId,
+            telegramId: userProfile?.telegramId,
+            username: userProfile?.username || userProfile?.telegramUsername,
+            firstName: userProfile?.firstName,
+            source: 'testnet_swap',
+            amount: REAL_SWAP_REWARD,
+            balanceType: 'real',
+            extraUserUpdates: {
+              betaBalances: newBetaBalances,
+              lastActiveAt: serverTimestamp(),
+              lastActiveTimestamp: Date.now()
+            }
           });
 
           await awardXP(targetId, 30);
