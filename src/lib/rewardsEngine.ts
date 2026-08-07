@@ -118,59 +118,34 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       createdAt: serverTimestamp()
     };
 
-    const flattenedExtraUpdates = flattenObjectToDotNotation(extraUserUpdates);
-
-    const userUpdateFields: Record<string, any> = {
-      'realBalances.GRMF': increment(amount),
+    const userPayload: Record<string, any> = {
+      realBalances: {
+        GRMF: increment(amount)
+      },
       lastActiveAt: serverTimestamp(),
       lastActiveTimestamp: now,
-      ...flattenedExtraUpdates
+      ...extraUserUpdates
     };
 
     if (balanceType === 'both') {
-      userUpdateFields['betaBalances.GRMF'] = increment(amount);
+      userPayload.betaBalances = {
+        GRMF: increment(amount)
+      };
     }
 
-    // Execute atomic transaction
+    // Execute atomic transaction with merge set
     await runTransaction(db, async (transaction) => {
       // 1. Update Global Assets
-      const globalSnap = await transaction.get(globalAssetsRef);
-      if (!globalSnap.exists()) {
-        transaction.set(globalAssetsRef, {
-          totalDistributedTokens: amount,
-          totalRewardCount: 1,
-          lastUpdatedAt: serverTimestamp(),
-          createdAt: serverTimestamp()
-        });
-      } else {
-        transaction.set(globalAssetsRef, {
-          totalDistributedTokens: increment(amount),
-          totalRewardCount: increment(1),
-          lastUpdatedAt: serverTimestamp()
-        }, { merge: true });
-      }
+      transaction.set(globalAssetsRef, {
+        totalDistributedTokens: increment(amount),
+        totalRewardCount: increment(1),
+        lastUpdatedAt: serverTimestamp()
+      }, { merge: true });
 
-      // 2. Update User Document
-      const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists()) {
-        const initialUserObj: Record<string, any> = {
-          username: cleanUsername,
-          telegramId: cleanTgId ? Number(cleanTgId) : null,
-          firstName: firstName || null,
-          realBalances: { GRMF: amount },
-          betaBalances: { GRMF: balanceType === 'both' ? amount : 0 },
-          lastActiveAt: serverTimestamp(),
-          lastActiveTimestamp: now,
-          createdAt: serverTimestamp()
-        };
-        applyDotNotationToObject(initialUserObj, flattenedExtraUpdates);
-        transaction.set(userRef, initialUserObj, { merge: true });
-      } else {
-        // transaction.update parses field paths (dot notation) correctly without overwriting nested maps
-        transaction.update(userRef, userUpdateFields);
-      }
+      // 2. Update User Document safely with set merge
+      transaction.set(userRef, userPayload, { merge: true });
 
-      // 3. Save Transaction
+      // 3. Save Transaction Record
       transaction.set(txRef, txData, { merge: true });
     });
 
@@ -188,36 +163,22 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
         lastUpdatedAt: serverTimestamp()
       }, { merge: true });
 
-      const flattenedExtraUpdates = flattenObjectToDotNotation(extraUserUpdates);
-
-      const userUpdateFields: Record<string, any> = {
-        'realBalances.GRMF': increment(amount),
+      const userPayload: Record<string, any> = {
+        realBalances: {
+          GRMF: increment(amount)
+        },
         lastActiveAt: serverTimestamp(),
         lastActiveTimestamp: now,
-        ...flattenedExtraUpdates
+        ...extraUserUpdates
       };
 
       if (balanceType === 'both') {
-        userUpdateFields['betaBalances.GRMF'] = increment(amount);
+        userPayload.betaBalances = {
+          GRMF: increment(amount)
+        };
       }
 
-      const userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) {
-        const initialUserObj: Record<string, any> = {
-          username: cleanUsername,
-          telegramId: cleanTgId ? Number(cleanTgId) : null,
-          firstName: firstName || null,
-          realBalances: { GRMF: amount },
-          betaBalances: { GRMF: balanceType === 'both' ? amount : 0 },
-          lastActiveAt: serverTimestamp(),
-          lastActiveTimestamp: now,
-          createdAt: serverTimestamp()
-        };
-        applyDotNotationToObject(initialUserObj, flattenedExtraUpdates);
-        await setDoc(userRef, initialUserObj, { merge: true });
-      } else {
-        await updateDoc(userRef, userUpdateFields);
-      }
+      await setDoc(userRef, userPayload, { merge: true });
 
       await setDoc(txRef, {
         id: txId,

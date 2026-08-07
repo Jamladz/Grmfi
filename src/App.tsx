@@ -47,27 +47,24 @@ import { TasksView } from './components/TasksView';
 import { AirdropView } from './components/AirdropView';
 import { ProfileView } from './components/ProfileView';
 import { ReferralsView } from './components/ReferralsView';
-import { AdminView } from './components/AdminView';
 import { TokenSelectModal } from './components/TokenSelectModal';
-import { Users, ShieldCheck } from 'lucide-react';
+import { Users } from 'lucide-react';
 
 import { TOKENS, POOLS } from './data/tokens';
 import { Token, TransactionState, WalletState } from './types';
 
-type ActiveView = 'swap' | 'tasks' | 'airdrop' | 'profile' | 'referrals' | 'admin';
+type ActiveView = 'swap' | 'tasks' | 'airdrop' | 'profile' | 'referrals';
 
 function normalizeAndSanitizeUserData(rawData: any) {
-  if (!rawData || typeof rawData !== 'object') return { data: rawData, dirty: false, keysToRemove: [] };
+  if (!rawData || typeof rawData !== 'object') return { data: rawData, dirty: false };
   
   // Create a shallow clone to avoid mutating the original Firestore snapshot directly
   const data = { ...rawData };
   let dirty = false;
-  const keysToRemove: string[] = [];
 
   Object.keys(rawData).forEach(key => {
     if (key.includes('.')) {
       dirty = true;
-      keysToRemove.push(key);
       const parts = key.split('.');
       let target = data;
       for (let i = 0; i < parts.length - 1; i++) {
@@ -89,7 +86,7 @@ function normalizeAndSanitizeUserData(rawData: any) {
     }
   });
 
-  return { data, dirty, keysToRemove };
+  return { data, dirty };
 }
 
 function App() {
@@ -269,7 +266,7 @@ function App() {
         const unsubProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
             const rawData = docSnap.data();
-            const { data, dirty, keysToRemove } = normalizeAndSanitizeUserData(rawData);
+            const { data, dirty } = normalizeAndSanitizeUserData(rawData);
             const fullProfile = { id: userDocId, ...data };
             setUserProfile(fullProfile);
             setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
@@ -277,21 +274,11 @@ function App() {
 
             // If corrupt/legacy dot keys were found in Firestore, repair document permanently
             if (dirty) {
-              const cleanupPayload = keysToRemove.reduce((acc: any, k) => {
-                acc[k] = deleteField();
-                return acc;
-              }, {});
-
-              const repairPayload = {
-                ...flattenObjectToDotNotation({
-                  realBalances: data.realBalances || {},
-                  betaBalances: data.betaBalances || {},
-                  taskProgress: data.taskProgress || {}
-                }),
-                ...cleanupPayload
-              };
-
-              updateDoc(userRef, repairPayload).catch(err => console.warn("Auto-healing user doc failed:", err));
+              setDoc(userRef, {
+                realBalances: data.realBalances || {},
+                betaBalances: data.betaBalances || {},
+                taskProgress: data.taskProgress || {}
+              }, { merge: true }).catch(err => console.warn("Auto-healing user doc failed:", err));
             }
 
             // Persist locally for instant loading upon re-entry
@@ -470,10 +457,19 @@ function App() {
     }
   };
 
+  const mergedBalances: Record<string, number> = {
+    GRMF: Math.max(realGrmf, balances.GRMF || 0, userProfile?.realBalances?.GRMF || 0),
+    GRAM: Math.max(userProfile?.realBalances?.GRAM || 0, balances.GRAM || 0),
+    USDT: Math.max(userProfile?.realBalances?.USDT || 0, balances.USDT || 0),
+    NOT: Math.max(userProfile?.realBalances?.NOT || 0, balances.NOT || 0),
+    DOGS: Math.max(userProfile?.realBalances?.DOGS || 0, balances.DOGS || 0),
+    HMSTR: Math.max(userProfile?.realBalances?.HMSTR || 0, balances.HMSTR || 0),
+  };
+
   const wallet: WalletState = {
     address: tonConnectUI.account?.address || null,
     isConnected: !!tonConnectUI.connected,
-    balances: balances,
+    balances: mergedBalances,
     walletName: tonConnectUI.account ? 'TON Wallet' : null,
   };
 
@@ -482,6 +478,10 @@ function App() {
       setIsWalletOpen(true);
       return;
     }
+
+    const fAmt = parseFloat(fromAmount);
+    const tAmt = parseFloat(toAmount);
+    if (isNaN(fAmt) || fAmt <= 0 || isNaN(tAmt) || tAmt <= 0) return;
 
     setTxState('submitting');
     setTxHash(null);
@@ -492,41 +492,66 @@ function App() {
         setTxState('success');
         setTxHash('0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6));
         
-        // Update Firestore beta balances and give small REAL reward for activity
         const targetId = userProfile?.id || auth.currentUser?.uid;
         if (targetId) {
           const userRef = doc(db, 'users', targetId);
-          const fAmt = parseFloat(fromAmount);
-          const tAmt = parseFloat(toAmount);
-          
-          const newBetaBalances = {
-            ...balances,
-            [fromToken.symbol]: Math.max(0, (balances[fromToken.symbol] || 0) - fAmt),
-            [toToken.symbol]: (balances[toToken.symbol] || 0) + tAmt
-          };
-          
-          // Reward small real GRMF for every swap to make it feel real
-          const REAL_SWAP_REWARD = 0.5;
+          const fromSym = fromToken.symbol;
+          const toSym = toToken.symbol;
 
+          const curBeta = { ...balances };
+          const curReal = { ...(userProfile?.realBalances || {}) };
+
+          // Calculate updated balances for both testnet & real assets
+          const newBetaFrom = Math.max(0, (curBeta[fromSym] || 0) - fAmt);
+          const newBetaTo = (curBeta[toSym] || 0) + tAmt;
+
+          const newRealFrom = Math.max(0, (curReal[fromSym] || 0) - fAmt);
+          const newRealTo = (curReal[toSym] || 0) + tAmt;
+
+          const updatedBeta = { ...curBeta, [fromSym]: newBetaFrom, [toSym]: newBetaTo };
+          const updatedReal = { ...curReal, [fromSym]: newRealFrom, [toSym]: newRealTo };
+
+          // Optimistic local state updates
+          setBalances(updatedBeta);
+          if (toSym === 'GRMF') setRealGrmf(newRealTo);
+          else if (fromSym === 'GRMF') setRealGrmf(newRealFrom);
+
+          setUserProfile((prev: any) => ({
+            ...prev,
+            betaBalances: updatedBeta,
+            realBalances: updatedReal
+          }));
+
+          // Cache locally for instant reload
+          try {
+            localStorage.setItem('grmf_cached_balances', JSON.stringify(updatedBeta));
+            localStorage.setItem('grmf_cached_real_grmf', String(updatedReal.GRMF || 0));
+          } catch (e) {}
+
+          // Save both real and beta balances directly to Firestore
+          await setDoc(userRef, {
+            betaBalances: updatedBeta,
+            realBalances: updatedReal,
+            lastActiveAt: serverTimestamp(),
+            lastActiveTimestamp: Date.now()
+          }, { merge: true });
+
+          // Record transaction record
           await grantReward({
             userId: targetId,
             telegramId: userProfile?.telegramId,
             username: userProfile?.username || userProfile?.telegramUsername,
             firstName: userProfile?.firstName,
-            source: 'testnet_swap',
-            amount: REAL_SWAP_REWARD,
+            source: `swap_${fromSym}_to_${toSym}`,
+            amount: tAmt,
             balanceType: 'real',
-            extraUserUpdates: {
-              betaBalances: newBetaBalances,
-              lastActiveAt: serverTimestamp(),
-              lastActiveTimestamp: Date.now()
-            }
+            extraUserUpdates: {}
           });
 
           await awardXP(targetId, 30);
         }
-      }, 2000);
-    }, 1500);
+      }, 1500);
+    }, 1000);
   };
 
   const handleSelectToken = (token: Token) => {
@@ -664,11 +689,6 @@ function App() {
               <ProfileView key="profile" balances={balances} userProfile={userProfile} />
             </div>
           )}
-          {activeView === 'admin' && isAdmin && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-              <AdminView key="admin" userProfile={userProfile} />
-            </div>
-          )}
         </AnimatePresence>
       </main>
 
@@ -705,14 +725,6 @@ function App() {
             icon={<User className="w-5 h-5" />} 
             label="Profile" 
           />
-          {isAdmin && (
-            <NavButton 
-              active={activeView === 'admin'} 
-              onClick={() => setActiveView('admin')} 
-              icon={<ShieldCheck className="w-5 h-5" />} 
-              label="Admin" 
-            />
-          )}
         </div>
       </nav>
 

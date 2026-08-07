@@ -159,8 +159,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
 
         <div className="grid gap-3">
           {displayedTokens.map(token => {
-            const isGrmf = token.symbol === 'GRMF';
-            const balance = isGrmf ? realBalances.GRMF : (balances[token.symbol] || 0);
+            const realVal = realBalances[token.symbol] || 0;
+            const betaVal = balances[token.symbol] || 0;
+            const balance = Math.max(realVal, betaVal);
             const value = (balance * (token.priceUsd || 0)).toFixed(2);
 
             return (

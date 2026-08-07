@@ -5,6 +5,7 @@ import { doc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useTonWallet } from '@tonconnect/ui-react';
 import { awardXP } from '../lib/levelSystem';
+import { grantReward } from '../lib/rewardsEngine';
 
 export interface Achievement {
   id: string;
@@ -155,11 +156,18 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
 
     setClaimingId(achievement.id);
     try {
-      const userRef = doc(db, 'users', auth.currentUser.uid);
-      await updateDoc(userRef, {
-        'realBalances.GRMF': increment(achievement.rewardGRMF),
-        [`claimedAchievements.${achievement.id}`]: true,
-        lastActiveAt: serverTimestamp(),
+      await grantReward({
+        userId: auth.currentUser.uid,
+        telegramId: userProfile?.telegramId,
+        username: userProfile?.username || userProfile?.telegramUsername,
+        firstName: userProfile?.firstName,
+        source: `achievement_${achievement.id}`,
+        amount: achievement.rewardGRMF,
+        balanceType: 'both',
+        extraUserUpdates: {
+          [`claimedAchievements.${achievement.id}`]: true,
+          lastActiveAt: serverTimestamp(),
+        }
       });
       await awardXP(auth.currentUser.uid, 60);
     } catch (err) {

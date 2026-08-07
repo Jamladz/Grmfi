@@ -1,17 +1,15 @@
 import React from 'react';
-import { SlidersHorizontal, ShieldCheck } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import { TonConnectButton } from '@tonconnect/ui-react';
 
 interface HeaderProps {
   onOpenWalletDrawer: () => void;
   onOpenSettings: () => void;
-  onOpenAdmin?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onOpenWalletDrawer,
   onOpenSettings,
-  onOpenAdmin,
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full bg-white/90 backdrop-blur-xl border-b border-slate-100 px-4 lg:px-8 py-3">
@@ -43,18 +41,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Actions */}
         <div className="flex items-center gap-2">
-          {/* Admin Dashboard Button */}
-          {onOpenAdmin && (
-            <button
-              onClick={onOpenAdmin}
-              className="px-2.5 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-black text-[11px] flex items-center gap-1.5 shadow-md shadow-blue-500/20 hover:opacity-95 transition-all active:scale-95"
-              title="Admin Dashboard"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span className="hidden sm:inline">Admin</span>
-            </button>
-          )}
-
           {/* Settings Button */}
           <button
             onClick={onOpenSettings}

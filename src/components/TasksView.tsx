@@ -56,47 +56,67 @@ export function parseTimestampMs(val: any): number | undefined {
 }
 
 export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView }) => {
-  const [tasksState, setTasksState] = useState<Record<string, TaskState>>({});
+  const [tasksState, setTasksState] = useState<Record<string, TaskState>>(() => {
+    try {
+      const cached = localStorage.getItem('grmf_tasks_state_cache');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return {};
+  });
   const [timeLeft, setTimeLeft] = useState<Record<string, string>>({});
+  const [checkingCountdowns, setCheckingCountdowns] = useState<Record<string, number>>({});
   const [isDailyBoxModalOpen, setIsDailyBoxModalOpen] = useState(false);
+
+  // Cache tasksState to localStorage
+  useEffect(() => {
+    if (Object.keys(tasksState).length > 0) {
+      try {
+        localStorage.setItem('grmf_tasks_state_cache', JSON.stringify(tasksState));
+      } catch (e) {}
+    }
+  }, [tasksState]);
 
   // Sync tasksState from userProfile (Firestore snapshot) safely
   useEffect(() => {
     if (userProfile?.taskProgress) {
-      const newState: Record<string, TaskState> = {};
-      const now = Date.now();
+      setTasksState(prev => {
+        const newState: Record<string, TaskState> = { ...prev };
+        const now = Date.now();
 
-      Object.entries(userProfile.taskProgress).forEach(([id, data]: [string, any]) => {
-        const lastCompletedAt = parseTimestampMs(data.lastCompletedAt);
-        const nextAvailableAt = parseTimestampMs(data.nextAvailableAt);
-        const taskDef = INITIAL_TASKS.find(t => t.id === id);
+        Object.entries(userProfile.taskProgress).forEach(([id, data]: [string, any]) => {
+          const lastCompletedAt = parseTimestampMs(data.lastCompletedAt);
+          const nextAvailableAt = parseTimestampMs(data.nextAvailableAt);
+          const taskDef = INITIAL_TASKS.find(t => t.id === id);
 
-        let status: TaskStatus = data.status || 'idle';
-        let finalNextAvailableAt = nextAvailableAt;
+          let status: TaskStatus = data.status || 'idle';
 
-        if (taskDef?.isDaily) {
-          // If 24h countdown is still active, mark completed
-          if (nextAvailableAt && nextAvailableAt > now) {
-            status = 'completed';
-          } else if (nextAvailableAt && nextAvailableAt <= now) {
-            // 24 hours passed, reset status to idle
-            status = 'idle';
+          if (taskDef?.isDaily) {
+            if (nextAvailableAt && nextAvailableAt > now) {
+              status = 'completed';
+            } else if (nextAvailableAt && nextAvailableAt <= now) {
+              status = 'idle';
+            }
+          } else {
+            if (status === 'completed') {
+              status = 'completed';
+            }
           }
-        } else {
-          // One-time tasks remain permanently completed
-          if (status === 'completed') {
-            status = 'completed';
-          }
-        }
 
-        newState[id] = {
-          status,
-          lastCompletedAt,
-          nextAvailableAt,
-        };
+          // Don't downgrade active local checking or claimable states unless Firestore says completed
+          const localStatus = prev[id]?.status;
+          if ((localStatus === 'checking' || localStatus === 'claimable') && status !== 'completed') {
+            status = localStatus;
+          }
+
+          newState[id] = {
+            status,
+            lastCompletedAt,
+            nextAvailableAt,
+          };
+        });
+
+        return newState;
       });
-
-      setTasksState(newState);
     }
   }, [userProfile]);
 
@@ -170,25 +190,15 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       amount: 1,
       balanceType: 'both',
       extraUserUpdates: {
-        [`taskProgress.daily-box.status`]: 'completed',
-        [`taskProgress.daily-box.lastCompletedAt`]: serverTimestamp(),
-        [`taskProgress.daily-box.nextAvailableAt`]: nextAvailable
-      }
-    });
-
-    // Explicitly save the task progress via setDoc merge
-    const userRef = doc(db, 'users', targetId);
-    await setDoc(userRef, {
-      realBalances: { GRMF: increment(1) },
-      betaBalances: { GRMF: increment(1) },
-      taskProgress: {
-        'daily-box': {
-          status: 'completed',
-          lastCompletedAt: serverTimestamp(),
-          nextAvailableAt: nextAvailable
+        taskProgress: {
+          'daily-box': {
+            status: 'completed',
+            lastCompletedAt: serverTimestamp(),
+            nextAvailableAt: nextAvailable
+          }
         }
       }
-    }, { merge: true });
+    });
 
     // Award XP
     await awardXP(targetId, 50);
@@ -219,12 +229,14 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
 
     // 2. Prepare structured extraUserUpdates
     const extraUpdates: Record<string, any> = {
-      [`taskProgress.${task.id}.status`]: 'completed',
-      [`taskProgress.${task.id}.lastCompletedAt`]: serverTimestamp()
+      taskProgress: {
+        [task.id]: {
+          status: 'completed',
+          lastCompletedAt: serverTimestamp(),
+          ...(task.isDaily && nextAvailable ? { nextAvailableAt: nextAvailable } : {})
+        }
+      }
     };
-    if (task.isDaily && nextAvailable) {
-      extraUpdates[`taskProgress.${task.id}.nextAvailableAt`] = nextAvailable;
-    }
 
     // 3. Grant reward through Unified Engine
     try {
@@ -238,23 +250,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
         balanceType: 'both',
         extraUserUpdates: extraUpdates
       });
-      
-      // Explicitly save the task progress via setDoc merge to guarantee it persists independently
-      const userRef = doc(db, 'users', targetId);
-      const explicitUpdates: any = {
-        realBalances: { GRMF: increment(task.rewardValue) },
-        betaBalances: { GRMF: increment(task.rewardValue) },
-        taskProgress: {
-          [task.id]: {
-            status: 'completed',
-            lastCompletedAt: serverTimestamp()
-          }
-        }
-      };
-      if (task.isDaily && nextAvailable) {
-        explicitUpdates.taskProgress[task.id].nextAvailableAt = nextAvailable;
-      }
-      await setDoc(userRef, explicitUpdates, { merge: true });
 
       await awardXP(targetId, 40);
     } catch (err) {
@@ -287,19 +282,43 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
       }
     }
 
-    if (currentState.status === 'idle' || currentState.status === 'claimable') {
+    // If task is claimable, execute the claim and route rewards to Global Assets
+    if (currentState.status === 'claimable') {
+      await executeTaskClaim(task);
+      return;
+    }
+
+    // If task is idle, start 5-second countdown
+    if (currentState.status === 'idle') {
+      // 1. Open external link if available
+      if (task.actionType === 'link' && task.link) {
+        window.open(task.link, '_blank');
+      } else if (task.actionType === 'swap') {
+        setActiveView('swap');
+      }
+
+      // 2. Set status to checking and start 5-second countdown
       setTasksState(prev => ({ ...prev, [task.id]: { ...prev[task.id], status: 'checking' } }));
-      
-      setTimeout(async () => {
-        await executeTaskClaim(task);
-        
-        // Execute Action if any AFTER task claim triggers
-        if (task.actionType === 'swap') {
-          setActiveView('swap');
-        } else if (task.actionType === 'link' && task.link) {
-          window.open(task.link, '_blank');
+      setCheckingCountdowns(prev => ({ ...prev, [task.id]: 5 }));
+
+      let remaining = 5;
+      const interval = setInterval(() => {
+        remaining -= 1;
+        if (remaining > 0) {
+          setCheckingCountdowns(prev => ({ ...prev, [task.id]: remaining }));
+        } else {
+          clearInterval(interval);
+          setCheckingCountdowns(prev => {
+            const copy = { ...prev };
+            delete copy[task.id];
+            return copy;
+          });
+          setTasksState(prev => ({
+            ...prev,
+            [task.id]: { ...prev[task.id], status: 'claimable' }
+          }));
         }
-      }, 400);
+      }, 1000);
     }
   };
 
@@ -371,18 +390,18 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
                       isCompleted 
                         ? 'bg-slate-100 text-slate-400 cursor-default'
                         : isChecking
-                        ? 'bg-blue-50 text-[#24A1DE] border border-blue-100'
+                        ? 'bg-blue-50 text-[#24A1DE] border border-blue-100 cursor-wait'
                         : isClaimable
-                        ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-200 animate-bounce'
-                        : 'bg-slate-900 text-white shadow-lg active:scale-95'
+                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-200 animate-bounce cursor-pointer'
+                        : 'bg-slate-900 text-white shadow-lg active:scale-95 cursor-pointer'
                     }`}
                   >
                     {isCompleted ? (
-                      <CheckCircle2 className="w-4 h-4" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                     ) : isChecking ? (
                       <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Check
+                        <Loader2 className="w-3 h-3 animate-spin text-[#24A1DE]" />
+                        <span>{checkingCountdowns[task.id] || 5}s</span>
                       </>
                     ) : isClaimable ? (
                       'Claim'
