@@ -14,6 +14,12 @@ export const useHomeScreenShortcut = () => {
       return;
     }
 
+    // Add an explicit version check if available (checkHomeScreenStatus was added in newer versions)
+    if (typeof tg.isVersionAtLeast === 'function' && !tg.isVersionAtLeast('7.0')) {
+      setStatus('unsupported');
+      return;
+    }
+
     const handleStatusChecked = (event: any) => {
        // event: { status: "added" | "missed" | "unknown" | "unsupported" }
        if (event && event.status) {
@@ -34,8 +40,8 @@ export const useHomeScreenShortcut = () => {
     // Trigger the status check
     try {
       tg.checkHomeScreenStatus();
-    } catch (e) {
-      console.error('Error checking home screen status', e);
+    } catch (e: any) {
+      // Quietly handle unsupported method errors to avoid polluting the console
       setStatus('unsupported');
     }
 
@@ -52,8 +58,8 @@ export const useHomeScreenShortcut = () => {
     if (tg && typeof tg.addToHomeScreen === 'function') {
       try {
         tg.addToHomeScreen();
-      } catch (e) {
-        console.error('Error adding to home screen', e);
+      } catch (e: any) {
+        // Quietly handle unsupported method errors
       }
     }
   }, []);

@@ -91,7 +91,8 @@ export function applyDotNotationToObject(target: Record<string, any>, dotMap: Re
 export async function grantReward(options: GrantRewardOptions): Promise<GrantRewardResult> {
   const { userId, telegramId, username, firstName, source, amount, balanceType = 'both', extraUserUpdates = {} } = options;
 
-  if (!userId || typeof amount !== 'number' || amount <= 0) {
+  if (!userId || typeof amount !== 'number' || isNaN(amount) || amount <= 0) {
+    console.error("Invalid grantReward parameters:", { userId, amount });
     return { success: false, message: 'Invalid userId or reward amount' };
   }
 
@@ -118,23 +119,31 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       createdAt: serverTimestamp()
     };
 
-    const userPayload: Record<string, any> = {
-      realBalances: {
-        GRMF: increment(amount)
-      },
-      lastActiveAt: serverTimestamp(),
-      lastActiveTimestamp: now,
+    // Build a nested payload to use with set merge
+    const userPayload: Record<string, any> = {};
+    
+    // We start with the base updates in dot-notation and convert to nested
+    const initialDotMap: Record<string, any> = {
+      'realBalances.GRMF': increment(amount),
+      'lastActiveAt': serverTimestamp(),
+      'lastActiveTimestamp': now,
     };
 
     if (balanceType === 'both') {
-      userPayload.betaBalances = {
-        GRMF: increment(amount)
-      };
+      initialDotMap['betaBalances.GRMF'] = increment(amount);
     }
 
-    applyDotNotationToObject(userPayload, extraUserUpdates);
+    // Combine with extra updates
+    Object.entries(extraUserUpdates).forEach(([k, v]) => {
+      initialDotMap[k] = v;
+    });
 
-    // Execute atomic transaction with merge set
+    // Convert to nested object structure for proper Firestore merging
+    applyDotNotationToObject(userPayload, initialDotMap);
+
+    console.log(`[GrantReward] Attempting to grant ${amount} GRMF to ${userId} via ${source}`);
+
+    // Execute atomic transaction
     await runTransaction(db, async (transaction) => {
       // 1. Update Global Assets
       transaction.set(globalAssetsRef, {
@@ -143,42 +152,44 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
         lastUpdatedAt: serverTimestamp()
       }, { merge: true });
 
-      // 2. Update User Document safely with set merge
+      // 2. Update User Document safely with deep merge
       transaction.set(userRef, userPayload, { merge: true });
 
       // 3. Save Transaction Record
       transaction.set(txRef, txData, { merge: true });
     });
 
+    console.log(`[GrantReward] Success: ${txId}`);
     return { success: true, txId };
   } catch (error: any) {
     console.warn("Unified reward transaction fallback mode:", error);
     try {
+      const userRef = doc(db, 'users', userId);
       const globalAssetsRef = doc(db, 'global', 'assets');
       const txRef = doc(db, 'transactions', txId);
-      const userRef = doc(db, 'users', userId);
+
+      const userPayload: Record<string, any> = {};
+      const initialDotMap: Record<string, any> = {
+        'realBalances.GRMF': increment(amount),
+        'lastActiveAt': serverTimestamp(),
+        'lastActiveTimestamp': now,
+      };
+
+      if (balanceType === 'both') {
+        initialDotMap['betaBalances.GRMF'] = increment(amount);
+      }
+
+      Object.entries(extraUserUpdates).forEach(([k, v]) => {
+        initialDotMap[k] = v;
+      });
+
+      applyDotNotationToObject(userPayload, initialDotMap);
 
       await setDoc(globalAssetsRef, {
         totalDistributedTokens: increment(amount),
         totalRewardCount: increment(1),
         lastUpdatedAt: serverTimestamp()
       }, { merge: true });
-
-      const userPayload: Record<string, any> = {
-        realBalances: {
-          GRMF: increment(amount)
-        },
-        lastActiveAt: serverTimestamp(),
-        lastActiveTimestamp: now,
-      };
-
-      if (balanceType === 'both') {
-        userPayload.betaBalances = {
-          GRMF: increment(amount)
-        };
-      }
-
-      applyDotNotationToObject(userPayload, extraUserUpdates);
 
       await setDoc(userRef, userPayload, { merge: true });
 

@@ -67,12 +67,13 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
   const boxCompletedToday = lastBoxDate === todayStr;
 
   const handleClaimTask = async (taskId: string, rewardAmount: number, sourceName: string, extraUpdates: Record<string, any> = {}) => {
-    if (!auth.currentUser) return;
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId) return;
     setClaimingId(taskId);
 
     try {
       const res = await grantReward({
-        userId: auth.currentUser.uid,
+        userId: targetId,
         telegramId: userProfile?.telegramId,
         username: userProfile?.username || userProfile?.telegramUsername,
         firstName: userProfile?.firstName,
@@ -87,7 +88,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
 
       if (res.success) {
         setSuccessModal({
-          title: taskId === 'shortcut' ? 'Shortcut Added Successfully!' : taskId === 'daily_login' ? 'Daily Check-in Claimed!' : 'Mystery Box Opened!',
+          title: taskId.includes('shortcut') ? 'Shortcut Added Successfully!' : taskId === 'daily_login' ? 'Daily Check-in Claimed!' : 'Mystery Box Opened!',
           amount: rewardAmount
         });
       }
