@@ -42,7 +42,7 @@ export interface Pool {
   myLiquidityUsd?: number;
 }
 
-export type TransactionState = 'idle' | 'submitting' | 'confirming' | 'success' | 'error';
+export type TransactionState = 'idle' | 'submitting' | 'confirming' | 'success' | 'failed' | 'error';
 
 export interface TransactionRecord {
   id: string;

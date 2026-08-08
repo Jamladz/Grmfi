@@ -5,6 +5,7 @@ import { TonConnectButton } from '@tonconnect/ui-react';
 interface HeaderProps {
   onOpenWalletDrawer: () => void;
   onOpenSettings: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -32,7 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="flex items-center gap-1.5 mt-1.5 opacity-60">
                 <div className="h-[1px] w-3 bg-blue-500/50" />
                 <span className="text-[8px] font-black text-slate-500 tracking-[0.25em] uppercase whitespace-nowrap">
-                  GRAM DEX
+                  GRMF DEX
                 </span>
               </div>
             </div>

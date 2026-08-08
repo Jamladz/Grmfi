@@ -11,9 +11,11 @@ import { getUserTotalXp, getUserLevelInfo } from '../lib/levelSystem';
 interface ProfileViewProps {
   balances: Record<string, number>;
   userProfile: any;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
 }
 
-export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile }) => {
+export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile, isAdmin, onOpenAdmin }) => {
   const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
   const [isRanksOpen, setIsRanksOpen] = useState(false);
   const [isWhitepaperOpen, setIsWhitepaperOpen] = useState(false);
@@ -231,6 +233,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
           badge="v2.4"
           onClick={() => setIsWhitepaperOpen(true)}
         />
+        {isAdmin && (
+          <MenuButton 
+            icon={<Shield className="w-4 h-4 text-rose-500" />} 
+            label="Admin Panel" 
+            badge="Owner"
+            onClick={onOpenAdmin}
+          />
+        )}
       </div>
 
       {/* Ranks Modal */}

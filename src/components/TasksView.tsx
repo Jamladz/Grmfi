@@ -88,7 +88,9 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
 
       if (res.success) {
         setSuccessModal({
-          title: taskId.includes('shortcut') ? 'Shortcut Added Successfully!' : taskId === 'daily_login' ? 'Daily Check-in Claimed!' : 'Mystery Box Opened!',
+          title: taskId.includes('shortcut') ? 'Shortcut Added Successfully!' : 
+                 taskId === 'daily_login' ? 'Daily Check-in Claimed!' : 
+                 taskId === 'mystery_box' ? 'Mystery Box Opened!' : 'Swap Mission Completed!',
           amount: rewardAmount
         });
       }
@@ -97,6 +99,25 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     } finally {
       setClaimingId(null);
     }
+  };
+
+  const swapTasks = [
+    { id: 'swap_grmf_gram', symbol: 'GRAM', label: 'Swap GRMF to GRAM', reward: 50 },
+    { id: 'swap_grmf_usdt', symbol: 'USDT', label: 'Swap GRMF to USDT', reward: 50 },
+    { id: 'swap_grmf_not', symbol: 'NOT', label: 'Swap GRMF to NOT', reward: 50 },
+    { id: 'swap_grmf_dogs', symbol: 'DOGS', label: 'Swap GRMF to DOGS', reward: 50 },
+    { id: 'swap_grmf_hmstr', symbol: 'HMSTR', label: 'Swap GRMF to HMSTR', reward: 50 },
+  ];
+
+  const handleGoToSwap = () => {
+    setActiveView('swap');
+  };
+
+  const handleClaimSwapTask = async (taskId: string, reward: number) => {
+    await handleClaimTask(taskId, reward, `task_${taskId}`, {
+      [`taskProgress.${taskId}.status`]: 'claimed',
+      [`taskProgress.${taskId}.claimedAt`]: Date.now()
+    });
   };
 
   const handleClaimShortcut = async () => {
@@ -315,6 +336,64 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
             </div>
           </div>
         )}
+
+        {/* Swap Mission Tasks */}
+        {(activeTab === 'all' || activeTab === 'special') && swapTasks.map((task) => {
+          const rawTask = taskProgress?.[task.id];
+          const status = typeof rawTask === 'object' && rawTask !== null 
+            ? rawTask.status 
+            : typeof rawTask === 'string' 
+              ? rawTask 
+              : undefined;
+          const isCompleted = status === 'completed';
+          const isClaimed = status === 'claimed';
+
+          return (
+            <div key={task.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center justify-between gap-3 hover:border-blue-200 transition-all">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0 shadow-inner">
+                <Coins className="w-6 h-6" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight truncate">
+                    {task.label}
+                  </h4>
+                  <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
+                    +{task.reward} GRMF
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  {isClaimed ? 'Reward claimed' : isCompleted ? 'Task ready to claim' : `Exchange GRMF for ${task.symbol} to earn`}
+                </p>
+              </div>
+              <div>
+                {isClaimed ? (
+                  <div className="flex items-center gap-1 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-100">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Claimed</span>
+                  </div>
+                ) : isCompleted ? (
+                  <button
+                    onClick={() => handleClaimSwapTask(task.id, task.reward)}
+                    disabled={claimingId === task.id}
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-emerald-500/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <span>{claimingId === task.id ? 'Claiming...' : 'Claim'}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleGoToSwap}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-blue-500/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>GO</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Success Modal Notification */}

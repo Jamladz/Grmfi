@@ -119,27 +119,21 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       createdAt: serverTimestamp()
     };
 
-    // Build a nested payload to use with set merge
-    const userPayload: Record<string, any> = {};
-    
-    // We start with the base updates in dot-notation and convert to nested
-    const initialDotMap: Record<string, any> = {
+    // Build a flat payload to use with set merge to ensure deep merging of nested maps
+    const flatUserUpdates: Record<string, any> = {
       'realBalances.GRMF': increment(amount),
       'lastActiveAt': serverTimestamp(),
       'lastActiveTimestamp': now,
     };
 
     if (balanceType === 'both') {
-      initialDotMap['betaBalances.GRMF'] = increment(amount);
+      flatUserUpdates['betaBalances.GRMF'] = increment(amount);
     }
 
-    // Combine with extra updates
+    // Combine with extra updates (these are usually already dot-notation)
     Object.entries(extraUserUpdates).forEach(([k, v]) => {
-      initialDotMap[k] = v;
+      flatUserUpdates[k] = v;
     });
-
-    // Convert to nested object structure for proper Firestore merging
-    applyDotNotationToObject(userPayload, initialDotMap);
 
     console.log(`[GrantReward] Attempting to grant ${amount} GRMF to ${userId} via ${source}`);
 
@@ -152,8 +146,8 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
         lastUpdatedAt: serverTimestamp()
       }, { merge: true });
 
-      // 2. Update User Document safely with deep merge
-      transaction.set(userRef, userPayload, { merge: true });
+      // 2. Update User Document safely with flat keys for deep merge
+      transaction.set(userRef, flatUserUpdates, { merge: true });
 
       // 3. Save Transaction Record
       transaction.set(txRef, txData, { merge: true });
@@ -168,22 +162,19 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       const globalAssetsRef = doc(db, 'global', 'assets');
       const txRef = doc(db, 'transactions', txId);
 
-      const userPayload: Record<string, any> = {};
-      const initialDotMap: Record<string, any> = {
+      const flatUserUpdates: Record<string, any> = {
         'realBalances.GRMF': increment(amount),
         'lastActiveAt': serverTimestamp(),
         'lastActiveTimestamp': now,
       };
 
       if (balanceType === 'both') {
-        initialDotMap['betaBalances.GRMF'] = increment(amount);
+        flatUserUpdates['betaBalances.GRMF'] = increment(amount);
       }
 
       Object.entries(extraUserUpdates).forEach(([k, v]) => {
-        initialDotMap[k] = v;
+        flatUserUpdates[k] = v;
       });
-
-      applyDotNotationToObject(userPayload, initialDotMap);
 
       await setDoc(globalAssetsRef, {
         totalDistributedTokens: increment(amount),
@@ -191,7 +182,7 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
         lastUpdatedAt: serverTimestamp()
       }, { merge: true });
 
-      await setDoc(userRef, userPayload, { merge: true });
+      await setDoc(userRef, flatUserUpdates, { merge: true });
 
       await setDoc(txRef, {
         id: txId,

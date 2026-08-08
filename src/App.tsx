@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useTonConnectUI } from '@tonconnect/ui-react';
+import { useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
 import { 
   ArrowLeftRight, 
   Wallet as WalletIcon, 
@@ -10,7 +10,8 @@ import {
   Award,
   UserCheck,
   Sparkles,
-  ListTodo
+  ListTodo,
+  AlertCircle
 } from 'lucide-react';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { 
@@ -56,11 +57,22 @@ import { Token, TransactionState, WalletState } from './types';
 
 type ActiveView = 'swap' | 'tasks' | 'referrals' | 'airdrop' | 'profile' | 'admin';
 
-function normalizeAndSanitizeUserData(rawData: any) {
-  if (!rawData || typeof rawData !== 'object') return { data: rawData };
+function safeCloneDeep(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (obj instanceof Date) return new Date(obj);
+  if (Array.isArray(obj)) return obj.map(safeCloneDeep);
   
-  // Create a shallow clone to avoid mutating the original Firestore snapshot directly
-  const data = { ...rawData };
+  const copy: Record<string, any> = {};
+  for (const key of Object.keys(obj)) {
+    copy[key] = safeCloneDeep(obj[key]);
+  }
+  return copy;
+}
+
+function normalizeAndSanitizeUserData(rawData: any) {
+  if (!rawData || typeof rawData !== 'object') return { data: rawData || {} };
+  
+  const data = safeCloneDeep(rawData);
 
   Object.keys(rawData).forEach(key => {
     if (key.includes('.')) {
@@ -68,7 +80,7 @@ function normalizeAndSanitizeUserData(rawData: any) {
       let target = data;
       for (let i = 0; i < parts.length - 1; i++) {
         const p = parts[i];
-        if (!target[p] || typeof target[p] !== 'object') {
+        if (!target[p] || typeof target[p] !== 'object' || Array.isArray(target[p])) {
           target[p] = {};
         }
         target = target[p];
@@ -122,6 +134,7 @@ function App() {
   const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [txState, setTxState] = useState<TransactionState>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [appError, setAppError] = useState<string | null>(null);
 
   // Derived Telegram User info for instant display
   const instantTgUsername = tgUser?.username || (
@@ -172,16 +185,16 @@ function App() {
     referrerName: string;
     isPremium: boolean;
   } | null>(null);
-  const [isAppReady, setIsAppReady] = useState(true);
+  const [isAppReady, setIsAppReady] = useState(false);
 
   // Rewards Configuration
   const WELCOME_REWARD = 5000;
   const DAILY_REWARD_REAL = 5;
 
-  // Admin access check for sekanedr_is
+  // Admin access check for sekanedr_is and Ridha1993
   const rawTgUsername = tgUser?.username || userProfile?.telegramUsername || userProfile?.username || '';
   const sanitizedTgUsername = rawTgUsername.toLowerCase().replace(/^@/, '').trim();
-  const isAdmin = sanitizedTgUsername === 'sekanedr_is' || auth.currentUser?.email === 'sekanedrmessaif@gmail.com';
+  const isAdmin = sanitizedTgUsername === 'sekanedr_is' || sanitizedTgUsername === 'ridha1993' || auth.currentUser?.email === 'sekanedrmessaif@gmail.com';
 
   // Helper function: Resolve permanent, immutable user document ID across reloads
   const resolveUserDocId = async (user: any): Promise<string> => {
@@ -272,6 +285,7 @@ function App() {
             setUserProfile(fullProfile);
             setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
             setRealGrmf(data.realBalances?.GRMF || 0);
+            setAppError(null);
 
             // Persist locally for instant loading upon re-entry
             try {
@@ -280,98 +294,8 @@ function App() {
               localStorage.setItem('grmf_cached_real_grmf', String(data.realBalances?.GRMF || 0));
             } catch (e) {}
 
-            // 1. Activity Persistence: Track last active and Daily login bonus
-            const now = Date.now();
-            const lastActive = data.lastActiveTimestamp || 0;
-            const lastLoginBonusAt = data.lastLoginBonusTimestamp || 0;
-            
-            const todayStr = new Date(now).toDateString();
-            const isNewDay = todayStr !== new Date(lastLoginBonusAt).toDateString();
-            const bonusKey = `${userDocId}_${todayStr}`;
-            
-            if (isNewDay && data.hasCollectedWelcomeBonus && !processedDailyBonusRef.current.has(bonusKey)) {
-              processedDailyBonusRef.current.add(bonusKey);
-              grantReward({
-                userId: userDocId,
-                telegramId: tgUser?.id || data.telegramId,
-                username: data.username || data.telegramUsername,
-                firstName: tgUser?.first_name || data.firstName,
-                source: 'daily_login',
-                amount: DAILY_REWARD_REAL,
-                balanceType: 'both',
-                extraUserUpdates: {
-                  lastLoginBonusTimestamp: now,
-                  lastActiveAt: serverTimestamp(),
-                  lastActiveTimestamp: now
-                }
-              }).then(res => {
-                if (res && res.success) {
-                  console.log("Daily reward credited for returning user!");
-                } else {
-                  processedDailyBonusRef.current.delete(bonusKey);
-                }
-              }).catch(err => {
-                console.error("Daily reward failed:", err);
-                processedDailyBonusRef.current.delete(bonusKey);
-              });
-            } else if (now - lastActive > 5 * 60 * 1000) { 
-              updateDoc(userRef, {
-                lastActiveAt: serverTimestamp(),
-                lastActiveTimestamp: now
-              }).catch(err => console.warn("updateDoc lastActive failed:", err));
-            }
-
-            // Automatically update Telegram User Info (username, firstName, telegramId) if changed in Telegram
-            const tgUsernameClean = tgUser?.username || null;
-            const tgFirstNameClean = tgUser?.first_name || null;
-            const tgIdClean = tgUser?.id || null;
-
-            if (tgUser && (
-              (tgUsernameClean && data.telegramUsername !== tgUsernameClean) ||
-              (tgFirstNameClean && data.firstName !== tgFirstNameClean) ||
-              (tgIdClean && data.telegramId !== tgIdClean)
-            )) {
-              setDoc(userRef, {
-                ...(tgUsernameClean ? { username: tgUsernameClean, telegramUsername: tgUsernameClean } : {}),
-                ...(tgFirstNameClean ? { firstName: tgFirstNameClean } : {}),
-                ...(tgIdClean ? { telegramId: tgIdClean } : {})
-              }, { merge: true }).catch(err => console.warn("setDoc tg user info failed:", err));
-            }
-            
-            // Process referral if pending
-            if (!data.hasProcessedReferral) {
-              processReferral(userDocId, data, tgUser).then((res) => {
-                if (res && res.success && res.reward) {
-                  setReferralBonusModal({
-                    show: true,
-                    reward: res.reward,
-                    referrerName: res.referrerUsername || 'Friend',
-                    isPremium: !!res.isPremium
-                  });
-                }
-              });
-            } else if (
-              data.referralBonusReceived && 
-              !data.hasSeenReferralRewardModal && 
-              !localStorage.getItem(`seen_ref_modal_${userDocId}`)
-            ) {
-              setReferralBonusModal({
-                show: true,
-                reward: data.referralBonusReceived,
-                referrerName: data.referredByName || 'Friend',
-                isPremium: Boolean(data.isPremium)
-              });
-            }
-
             // Sync referrals in background for referrer
             syncReferralsForUser(userDocId, data);
-
-            // Welcome Bonus logic
-            if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
-              setShowWelcomeModal(true);
-            } else {
-              setShowWelcomeModal(false);
-            }
           } else {
             // Create initial profile with Telegram data using persistent userDocId
             const finalUsername = detectedUsername || ('user_' + userDocId.slice(-6));
@@ -403,11 +327,26 @@ function App() {
                   });
                 }
               });
+            }).catch(err => {
+              console.warn("Initial setDoc failed:", err);
+              if (err.code === 'resource-exhausted') {
+                setAppError("Rate limit exceeded. Please try again later.");
+              }
             });
             if (!localStorage.getItem(`bonus_collected_${userDocId}`)) {
               setShowWelcomeModal(true);
             }
           }
+        }, (error) => {
+          console.error("Profile snapshot error:", error);
+          if (error.code === 'resource-exhausted') {
+            setAppError("Rate limit exceeded. Please try again later.");
+          } else if (error.code === 'permission-denied') {
+            setAppError("Access denied. Please restart the app.");
+          } else {
+            setAppError("Unable to load profile. Please check your connection.");
+          }
+          setIsAppReady(true);
         });
         return () => unsubProfile();
       } else {
@@ -417,6 +356,112 @@ function App() {
 
     return () => unsubAuth();
   }, []);
+
+  // Handle background initialization tasks (Daily Login, TG Sync, Referrals)
+  // This effect runs whenever userProfile changes, but we use refs to ensure actions are performed sparingly
+  useEffect(() => {
+    if (!userProfile?.id || !isAppReady) return;
+
+    const userDocId = userProfile.id;
+    const userRef = doc(db, 'users', userDocId);
+    const data = userProfile;
+    const now = Date.now();
+
+    // 1. Daily Login Bonus (Once per day)
+    const lastLoginBonusAt = data.lastLoginBonusTimestamp || 0;
+    const todayStr = new Date(now).toDateString();
+    const isNewDay = todayStr !== new Date(lastLoginBonusAt).toDateString();
+    const bonusKey = `daily_claim_${userDocId}_${todayStr}`;
+
+    if (isNewDay && data.hasCollectedWelcomeBonus && !processedDailyBonusRef.current.has(bonusKey)) {
+      processedDailyBonusRef.current.add(bonusKey);
+      grantReward({
+        userId: userDocId,
+        telegramId: tgUser?.id || data.telegramId,
+        username: data.username || data.telegramUsername,
+        firstName: tgUser?.first_name || data.firstName,
+        source: 'daily_login',
+        amount: DAILY_REWARD_REAL,
+        balanceType: 'both',
+        extraUserUpdates: {
+          lastLoginBonusTimestamp: now,
+          lastActiveAt: serverTimestamp(),
+          lastActiveTimestamp: now
+        }
+      }).catch(err => {
+        console.warn("Daily reward background check failed:", err);
+        processedDailyBonusRef.current.delete(bonusKey);
+      });
+    }
+
+    // 2. Telegram Profile Sync (Only if changed)
+    const tgUsernameClean = tgUser?.username || null;
+    const tgFirstNameClean = tgUser?.first_name || null;
+    const tgIdClean = tgUser?.id || null;
+
+    if (tgUser && (
+      (tgUsernameClean && data.telegramUsername !== tgUsernameClean) ||
+      (tgFirstNameClean && data.firstName !== tgFirstNameClean) ||
+      (tgIdClean && data.telegramId !== tgIdClean)
+    )) {
+      const syncKey = `tg_sync_${userDocId}_${tgUsernameClean || ''}_${tgIdClean || ''}`;
+      if (!processedDailyBonusRef.current.has(syncKey)) {
+        processedDailyBonusRef.current.add(syncKey);
+        updateDoc(userRef, {
+          ...(tgUsernameClean ? { username: tgUsernameClean, telegramUsername: tgUsernameClean } : {}),
+          ...(tgFirstNameClean ? { firstName: tgFirstNameClean } : {}),
+          ...(tgIdClean ? { telegramId: tgIdClean } : {}),
+          lastActiveAt: serverTimestamp(),
+          lastActiveTimestamp: now
+        }).catch(err => console.warn("TG sync failed:", err));
+      }
+    }
+
+    // 3. Referral Processing
+    if (!data.hasProcessedReferral) {
+      const refKey = `ref_proc_${userDocId}`;
+      if (!processedDailyBonusRef.current.has(refKey)) {
+        processedDailyBonusRef.current.add(refKey);
+        processReferral(userDocId, data, tgUser).then((res) => {
+          if (res && res.success && res.reward) {
+            setReferralBonusModal({
+              show: true,
+              reward: res.reward,
+              referrerName: res.referrerUsername || 'Friend',
+              isPremium: !!res.isPremium
+            });
+          }
+        });
+      }
+    }
+
+    // 4. Activity heartbeat (Every 10 minutes)
+    const lastActive = data.lastActiveTimestamp || 0;
+    if (now - lastActive > 10 * 60 * 1000) {
+      updateDoc(userRef, {
+        lastActiveAt: serverTimestamp(),
+        lastActiveTimestamp: now
+      }).catch(e => {});
+    }
+
+    // 5. Reward Modals
+    if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
+      if (!showWelcomeModal) setShowWelcomeModal(true);
+    } else if (showWelcomeModal) {
+      setShowWelcomeModal(false);
+    }
+
+    if (data.referralBonusReceived && !data.hasSeenReferralRewardModal && !localStorage.getItem(`seen_ref_modal_${userDocId}`)) {
+      if (!referralBonusModal?.show) {
+        setReferralBonusModal({
+          show: true,
+          reward: data.referralBonusReceived,
+          referrerName: data.referredByName || 'Friend',
+          isPremium: Boolean(data.isPremium)
+        });
+      }
+    }
+  }, [userProfile?.id, isAppReady, tgUser]);
 
   const dismissReferralModal = () => {
     const targetId = userProfile?.id || auth.currentUser?.uid;
@@ -522,11 +567,21 @@ function App() {
           if (toSym === 'GRMF') setRealGrmf(newRealTo);
           else if (fromSym === 'GRMF') setRealGrmf(newRealFrom);
 
-          setUserProfile((prev: any) => ({
-            ...prev,
-            betaBalances: updatedBeta,
-            realBalances: updatedReal
-          }));
+          const taskId = (fromSym === 'GRMF' && toSym) ? `swap_grmf_${toSym.toLowerCase()}` : null;
+
+          setUserProfile((prev: any) => {
+            const prevProgress = prev?.taskProgress || {};
+            const updatedProgress = { ...prevProgress };
+            if (taskId && (!updatedProgress[taskId] || !updatedProgress[taskId].status)) {
+              updatedProgress[taskId] = { status: 'completed', completedAt: Date.now() };
+            }
+            return {
+              ...prev,
+              betaBalances: updatedBeta,
+              realBalances: updatedReal,
+              taskProgress: updatedProgress
+            };
+          });
 
           // Cache locally for instant reload
           try {
@@ -535,12 +590,23 @@ function App() {
           } catch (e) {}
 
           // Save both real and beta balances directly to Firestore
-          await setDoc(userRef, {
+          const firestoreUpdate: any = {
             betaBalances: updatedBeta,
             realBalances: updatedReal,
             lastActiveAt: serverTimestamp(),
             lastActiveTimestamp: Date.now()
-          }, { merge: true });
+          };
+
+          // TASK COMPLETION: If swapping GRMF to another token
+          if (taskId) {
+            const currentStatus = userProfile?.taskProgress?.[taskId]?.status;
+            if (!currentStatus) {
+              firestoreUpdate[`taskProgress.${taskId}.status`] = 'completed';
+              firestoreUpdate[`taskProgress.${taskId}.completedAt`] = Date.now();
+            }
+          }
+
+          await setDoc(userRef, firestoreUpdate, { merge: true });
 
           // Record transaction record
           await grantReward({
@@ -624,6 +690,39 @@ function App() {
     }
   };
 
+  if (appError) {
+    return (
+      <div className="h-[100dvh] flex flex-col items-center justify-center p-6 text-center bg-white font-sans selection:bg-blue-500/30">
+        <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mb-6">
+          <AlertCircle className="w-10 h-10 text-amber-500" />
+        </div>
+        <h1 className="text-xl font-black text-slate-900 mb-2 tracking-tight">Service Temporarily Busy</h1>
+        <p className="text-slate-500 text-[13px] mb-8 max-w-xs leading-relaxed font-medium">{appError}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="w-full max-w-[200px] py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-slate-200 transition-transform active:scale-95"
+        >
+          Retry Now
+        </button>
+      </div>
+    );
+  }
+
+  if (!isAppReady && !userProfile) {
+    return (
+      <div className="h-[100dvh] flex flex-col items-center justify-center bg-[#F0F2F5] p-6 text-center">
+        <div className="relative mb-8">
+          <div className="absolute inset-0 bg-blue-500/20 rounded-full blur-2xl animate-pulse" />
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin relative z-10" />
+        </div>
+        <div className="space-y-1.5">
+          <span className="block text-slate-900 font-black text-sm uppercase tracking-[0.2em]">GRMF FI</span>
+          <span className="block text-slate-400 text-[10px] font-black uppercase tracking-widest animate-pulse">Initializing Ecosystem...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden">
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
@@ -701,7 +800,13 @@ function App() {
           )}
           {activeView === 'profile' && (
             <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-              <ProfileView key="profile" balances={balances} userProfile={userProfile} />
+              <ProfileView 
+                key="profile" 
+                balances={balances} 
+                userProfile={userProfile} 
+                isAdmin={isAdmin}
+                onOpenAdmin={() => setActiveView('admin')}
+              />
             </div>
           )}
           {activeView === 'admin' && (
@@ -745,7 +850,7 @@ function App() {
             icon={<User className="w-5 h-5" />} 
             label="Profile" 
           />
-          {(userProfile?.isAdmin || userProfile?.telegramId === '123456789') && (
+          {(isAdmin || userProfile?.isAdmin || userProfile?.telegramId === '123456789') && (
             <NavButton 
               active={activeView === 'admin'} 
               onClick={() => setActiveView('admin')} 
@@ -924,7 +1029,7 @@ const NavButton = ({ active, onClick, icon, label, badge }: { active: boolean, o
       />
     )}
     <div className={`p-1.5 sm:p-2 rounded-xl transition-all ${active ? 'bg-blue-50/80 scale-105' : ''}`}>
-      {React.cloneElement(icon as React.ReactElement, { className: 'w-4 h-4 sm:w-5 sm:h-5', strokeWidth: active ? 2.5 : 2 })}
+      {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-4 h-4 sm:w-5 sm:h-5', strokeWidth: active ? 2.5 : 2 })}
     </div>
     <span className={`text-[9px] sm:text-[10px] font-black uppercase tracking-tight ${active ? 'opacity-100' : 'opacity-60'} transition-all truncate max-w-full`}>
       {label}

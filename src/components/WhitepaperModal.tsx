@@ -65,7 +65,7 @@ const TRANSLATIONS: Record<Language, Translations> = {
   en: {
     title: "Official Whitepaper",
     subtitle: "GRMF Ecosystem Architecture & Economic Protocol",
-    version: "v2.4",
+    version: "v3.0",
     closeBtn: "Close Whitepaper",
     tabs: {
       overview: "Overview",
@@ -75,52 +75,52 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     overview: {
       execTitle: "Executive Summary",
-      execBody: "GRMF is a decentralized Web3 financial ecosystem built on TON Blockchain. Designed to unify micro-transactions, task-based mining, wealth progression tiers, and community governance into a seamless Telegram Mini App interface.",
-      multichainTitle: "Multi-Chain Ready",
-      multichainBody: "Native jetton smart contracts deployed on TON with cross-chain liquidity support.",
-      rankTitle: "Rank Mechanics",
-      rankBody: "10-Tier wealth progression system rewarding user engagement and ongoing activity.",
-      objectivesTitle: "Core Objectives",
+      execBody: "GRMF is a decentralized Web3 financial ecosystem officially listed on the TON Blockchain. Designed to unify micro-transactions, task-based mining, and wealth progression tiers into a seamless Telegram interface.",
+      multichainTitle: "TON Native Assets",
+      multichainBody: "Official GRMF jetton smart contracts deployed on TON Mainnet with deep liquidity and high-performance execution.",
+      rankTitle: "Wealth Progression",
+      rankBody: "A comprehensive 10-Tier evolution system that rewards long-term holders and active community contributors.",
+      objectivesTitle: "Strategic Objectives",
       objectivesList: [
-        "Democratize access to decentralized micro-yields",
-        "Transparent reward distribution powered by smart contracts",
-        "Integrated liquidity pools with automatic burn mechanisms"
+        "Full integration with TON DeFi ecosystem",
+        "Transparent, contract-verified reward mechanisms",
+        "Community-driven growth through active participation"
       ]
     },
     tokenomics: {
       supplyTitle: "Total Supply Allocation",
       totalSupply: "1,000,000,000 GRMF",
-      community: "Community & Mining Rewards",
-      ecosystem: "Ecosystem & Liquidity",
-      team: "Development & Team (Vested 24m)",
-      marketing: "Marketing & Partnerships",
-      deflationTitle: "🔥 Deflationary Mechanics",
-      deflationBody: "1% of all swap transaction fees are permanently burned from total circulating supply, increasing long-term scarcity and backing value."
+      community: "Mining & Airdrop Rewards",
+      ecosystem: "Liquidity & Governance",
+      team: "Dev & Operations (Vested)",
+      marketing: "Strategic Partnerships",
+      deflationTitle: "🔥 Economic Stability",
+      deflationBody: "GRMF utilizes advanced liquidity management and selective burn protocols to maintain its ecosystem growth and utility."
     },
     architecture: {
-      secTitle: "Security & Proof-of-Activity",
-      secBody: "The protocol uses client-server cryptographic proofs combined with zero-knowledge verification rules to prevent automated exploit bots while ensuring fast state syncing.",
-      xpTitle: "XP & Wealth Tier Protocol",
-      xpBody: "XP points are awarded dynamically for every validated activity (tasks, daily boxes, referrals, achievements). As total XP scales, users unlock higher wealth ranks from Poor to Master of Wealth.",
-      tonTitle: "TON Connect Integration",
-      tonBody: "Seamless non-custodial wallet connection through TON Connect v2 protocol, guaranteeing user ownership of on-chain Jetton assets."
+      secTitle: "TON Blockchain Security",
+      secBody: "Leveraging TON's high-speed sharding and PoS security to ensure instant transaction finality for all GRMF holders.",
+      xpTitle: "Proof-of-Contribution",
+      xpBody: "XP rewards validate real user contribution, determining access to exclusive GRMF-based financial tools and higher yield pools.",
+      tonTitle: "TON Connect 2.0",
+      tonBody: "Full support for non-custodial wallets like Tonkeeper and MyTonWallet, giving you total control over your GRMF assets."
     },
     roadmap: {
-      p1Phase: "Phase 1 • Q3 2026",
-      p1Title: "Ecosystem Launch & TGE",
-      p1Body: "Telegram Mini App rollout, task mining, XP system, and community referral engine.",
+      p1Phase: "Phase 1 • Completed",
+      p1Title: "TON Integration & TGE",
+      p1Body: "Successful migration to GRMF token and official TON listing.",
       p2Phase: "Phase 2 • Q4 2026",
-      p2Title: "On-Chain Jetton Mint & Staking",
-      p2Body: "TON Jetton smart contract deployment, Decentralized Exchange (DEX) liquidity pools, staking vaults.",
+      p2Title: "DeFi Expansion",
+      p2Body: "GRMF-based lending protocols, advanced staking vaults, and cross-chain TON bridges.",
       p3Phase: "Phase 3 • Q1 2027",
-      p3Title: "CEX Listing & DAO Governance",
-      p3Body: "Tier-1 Exchange listings, decentralized governance voting for rank holders, cross-chain expansion."
+      p3Title: "Global Ecosystem",
+      p3Body: "CEX Tier-1 listings, DAO governance implementation, and integration with TON Space."
     }
   },
   ar: {
     title: "الورقة البيضاء الرسمية",
     subtitle: "معمارية منظومة GRMF والبروتوكول الاقتصادي",
-    version: "v2.4",
+    version: "v3.0",
     closeBtn: "إغلاق الورقة البيضاء",
     tabs: {
       overview: "نظرة عامة",
@@ -130,52 +130,52 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     overview: {
       execTitle: "الملخص التنفيذي",
-      execBody: "مشروع GRMF هو منظومة مالية لا مركزية لمستقبل Web3 مبنية على شبكة TON. تم تصميمها لدمج المعاملات الدقيقة، التعدين عبر المهام، مستويات الثراء المتدرجة، والحوكمة المجتمعية في تطبيق تلغرام مصغر سلس ومبتكر.",
-      multichainTitle: "دعم شبكات متعددة",
-      multichainBody: "عقود ذكية من نوع Jetton على شبكة TON مع جسور وسيولة بين الشفرات.",
-      rankTitle: "نظام الرتب والتصنيف",
-      rankBody: "نظام تدرج مالي من 10 مستويات يكافئ تفاعل النشاط وبناء الثراء المستمر.",
-      objectivesTitle: "الأهداف الأساسية",
+      execBody: "GRMF هي منظومة مالية لا مركزية (Web3) مدرجة رسميًا على شبكة TON. تم تصميمها لدمج المعاملات الدقيقة، التعدين عبر المهام، ومستويات الثراء المتدرجة في واجهة تلغرام سلسة.",
+      multichainTitle: "أصول أصلية على TON",
+      multichainBody: "عقود GRMF الذكية (Jetton) منشورة على شبكة TON الرئيسية مع سيولة عميقة وأداء عالٍ.",
+      rankTitle: "تطور الثراء",
+      rankBody: "نظام تطور من 10 مستويات يكافئ حاملي الرموز على المدى الطويل والمساهمين النشطين في المجتمع.",
+      objectivesTitle: "الأهداف الاستراتيجية",
       objectivesList: [
-        "تمكين الوصول العادل للعياد المالية اللا مركزية الدقيقة",
-        "توزيع المكافآت بصلابة وشفافية عبر العقود الذكية",
-        "مجمعات سيولة مدمجة مع آليات حرق تلقائية لتعزيز قيمة الرمز"
+        "التكامل الكامل مع منظومة TON DeFi",
+        "آليات مكافآت شفافة وموثقة عبر العقود الذكية",
+        "النمو المدفوع من المجتمع من خلال المشاركة النشطة"
       ]
     },
     tokenomics: {
-      supplyTitle: "توزيع العرض الإجمالي",
+      supplyTitle: "توزيع إجمالي العرض",
       totalSupply: "1,000,000,000 GRMF",
-      community: "مكافآت المجتمع والتعدين",
-      ecosystem: "السيولة والمنظومة",
-      team: "التطوير والفريق (فترة استحقاق 24 شهرًا)",
-      marketing: "التسويق والشراكات",
-      deflationTitle: "🔥 آليات انكماشية محفزة",
-      deflationBody: "يتم حرق 1% من جميع رسوم عمليات المبادلة نهائيًا من العرض المتداول، مما يزيد الندوة ويرفع القيمة الداعمة للرمز."
+      community: "مكافآت التعدين والإنزال الجوي",
+      ecosystem: "السيولة والحوكمة",
+      team: "الفريق والعمليات (فترة استحقاق)",
+      marketing: "الشراكات الاستراتيجية",
+      deflationTitle: "🔥 الاستقرار الاقتصادي",
+      deflationBody: "تستخدم GRMF إدارة سيولة متقدمة وبروتوكولات حرق انتقائية لضمان نمو المنظومة وفائدتها."
     },
     architecture: {
-      secTitle: "الأمان وإثبات النشاط",
-      secBody: "يعتمد البروتوكول على إثباتات تشفير بين العميل والخادم وقواعد أمان موزع متقدمة لمنع البوتات الضارة وضمان تزامن آمن وسريع للبيانات.",
-      xpTitle: "بروتوكول XP ومستويات الثراء",
-      xpBody: "تُمنح نقاط XP ديناميكيًا لكل نشاط موثق (المهام، الصناديق اليومية، الإحالات، الإنجازات). مع زيادة XP يرتقي المستخدم من رتبة 'فقير' وصولاً إلى 'سيد الثراء'.",
-      tonTitle: "ربط محفظة TON Connect",
-      tonBody: "ربط غير حضاني مباشر للمحفظة عبر بروتوكول TON Connect v2 لتأكيد ملكية المستخدم المطلقة لأصول Jetton."
+      secTitle: "أمان شبكة TON",
+      secBody: "الاستفادة من تقنيات TON عالية السرعة وأمان PoS لضمان تأكيد فوري للمعاملات لجميع حاملي GRMF.",
+      xpTitle: "إثبات المساهمة",
+      xpBody: "نقاط XP ديناميكيًا لكل نشاط موثق (المهام، الصناديق اليومية، الإحالات، الإنجازات). مع زيادة XP يرتقي المستخدم في رتب الثراء داخل منظومة GRMF وصولاً إلى 'سيد الثراء'.",
+      tonTitle: "تكامل TON Connect 2.0",
+      tonBody: "دعم كامل للمحافظ غير الحاضنة مثل Tonkeeper، مما يمنحك تحكمًا مطلقًا في أصول GRMF الخاصة بك."
     },
     roadmap: {
-      p1Phase: "المرحلة 1 • Q3 2026",
-      p1Title: "إطلاق المنظومة و TGE",
-      p1Body: "تطوير وإطلاق تطبيق التلغرام المصغر، تعدين المهام، نظام XP، ومحرك الإحالات المجتمعي.",
+      p1Phase: "المرحلة 1 • اكتملت",
+      p1Title: "التكامل مع TON و TGE",
+      p1Body: "الانتقال الناجح إلى رمز GRMF والإدراج الرسمي على TON.",
       p2Phase: "المرحلة 2 • Q4 2026",
-      p2Title: "سك الرمز على الشبكة والتخزين",
-      p2Body: "نشر العقود الذكية لرمز Jetton على TON، إنشاء مجمعات السيولة على المنصات اللا مركزية (DEX)، وصناديق Staking.",
+      p2Title: "توسع DeFi",
+      p2Body: "بروتوكولات الإقراض القائمة على GRMF، صناديق التخزين المتقدمة، وجسور TON العابرة للشبكات.",
       p3Phase: "المرحلة 3 • Q1 2027",
-      p3Title: "الإدراج في المنصات وحوكمة DAO",
-      p3Body: "الإدراج في منصات التداول المركزية الكبرى (CEX)، تفعيل التصويت الحوكمي لأصحاب الرتب، والتوسع بين الشبكات."
+      p3Title: "المنظومة العالمية",
+      p3Body: "الإدراج في منصات التداول المركزية (CEX)، تفعيل حوكمة DAO، والتكامل مع TON Space."
     }
   },
   ru: {
     title: "Официальная Белая Книга",
     subtitle: "Архитектура экосистемы GRMF и экономический протокол",
-    version: "v2.4",
+    version: "v3.0",
     closeBtn: "Закрыть Белую Книгу",
     tabs: {
       overview: "Обзор",
@@ -185,52 +185,52 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     overview: {
       execTitle: "Краткий обзор",
-      execBody: "GRMF — это децентрализованная финансовая Web3-экосистема на блокчейне TON. Объединяет микротранзакции, майнинг за задания, системы рангов богатства и управление сообществом в удобном Telegram Mini App.",
-      multichainTitle: "Мультичейн готовая",
-      multichainBody: "Нативные смарт-контракты Jetton на блокчейне TON с поддержкой ликвидности.",
-      rankTitle: "Механика Рангов",
-      rankBody: "10-уровневая система финансового прогресса, вознаграждающая активность пользователей.",
-      objectivesTitle: "Главные Цели",
+      execBody: "GRMF — это децентрализованная финансовая Web3-экосистема, официально работающая на блокчейне TON. Она объединяет микротранзакции, майнинг за задания и систему рангов в удобном интерфейсе Telegram.",
+      multichainTitle: "Нативные активы TON",
+      multichainBody: "Официальные смарт-контракты GRMF (Jetton) развернуты в основной сети TON с глубокой ликвидностью.",
+      rankTitle: "Прогрессия Богатства",
+      rankBody: "Комплексная 10-уровневая система эволюции, вознаграждающая долгосрочных держателей и активных участников сообщества.",
+      objectivesTitle: "Стратегические Цели",
       objectivesList: [
-        "Демократизация доступа к децентрализованным микродоходам",
-        "Прозрачное распределение наград через смарт-контракты",
-        "Интегрированные пулы ликвидности с автосжиганием токенов"
+        "Полная интеграция с экосистемой TON DeFi",
+        "Прозрачные механизмы вознаграждения через смарт-контракты",
+        "Рост, основанный на сообществе через активное участие"
       ]
     },
     tokenomics: {
       supplyTitle: "Распределение общего объема",
       totalSupply: "1 000 000 000 GRMF",
-      community: "Награды сообщества и Майнинг",
-      ecosystem: "Экосистема и Ликвидность",
-      team: "Разработка и Команда (Вестинг 24m)",
-      marketing: "Маркетинг и Партнерства",
-      deflationTitle: "🔥 Дефляционная механика",
-      deflationBody: "1% от всех комиссий за обмены сжигается навсегда из обращения, увеличивая дефицит и ценность токена."
+      community: "Награды за майнинг и аирдропы",
+      ecosystem: "Ликвидность и управление",
+      team: "Разработка и операции (Вестинг)",
+      marketing: "Стратегические партнерства",
+      deflationTitle: "🔥 Экономическая стабильность",
+      deflationBody: "GRMF использует передовое управление ликвидностью и протоколы сжигания для поддержания роста и полезности экосистемы."
     },
     architecture: {
-      secTitle: "Безопасность и Proof-of-Activity",
-      secBody: "Протокол использует криптографические доказательства клиент-сервер и распределенные правила проверки подлинности для защиты от ботов и обеспечения быстрой синхронизации.",
-      xpTitle: "Протокол XP и Уровней Богатства",
+      secTitle: "Безопасность TON Blockchain",
+      secBody: "Использование высокоскоростного шардинга и безопасности PoS сети TON для мгновенного завершения транзакций.",
+      xpTitle: "Подтверждение вклада",
       xpBody: "Очки XP начисляются динамически за каждое подтвержденное действие. По мере роста XP пользователи открывают ранги от «Бедного» до «Владыки Богатства».",
-      tonTitle: "Интеграция TON Connect",
-      tonBody: "Безопасное подключение некастодиальных кошельков через протокол TON Connect v2 для полного контроля над Jetton-активами."
+      tonTitle: "TON Connect 2.0",
+      tonBody: "Полная поддержка некастодиальных кошельков, таких как Tonkeeper и MyTonWallet, дающая полный контроль над вашими активами GRMF."
     },
     roadmap: {
-      p1Phase: "Фаза 1 • Q3 2026",
-      p1Title: "Запуск Экосистемы и TGE",
-      p1Body: "Релиз Telegram Mini App, майнинг через задания, система XP и реферальный движок.",
+      p1Phase: "Фаза 1 • Завершено",
+      p1Title: "Интеграция TON и TGE",
+      p1Body: "Успешный переход на токен GRMF и официальный листинг на TON.",
       p2Phase: "Фаза 2 • Q4 2026",
-      p2Title: "Минт Jetton в сети и Стейкинг",
-      p2Body: "Деплой смарт-контрактов Jetton на TON, пулы ликвидности DEX, стейкинг-хранилища.",
+      p2Title: "Расширение DeFi",
+      p2Body: "Протоколы кредитования на базе GRMF, продвинутые хранилища для стейкинга и кросс-чейн мосты TON.",
       p3Phase: "Фаза 3 • Q1 2027",
-      p3Title: "Листинг на CEX и DAO Управление",
-      p3Body: "Листинг на топовых биржах, голосование DAO для обладателей рангов и расширение экосистемы."
+      p3Title: "Глобальная экосистема",
+      p3Body: "Листинг на CEX Tier-1, внедрение управления DAO и интеграция с TON Space."
     }
   },
   fa: {
     title: "وایت‌پیپر رسمی",
     subtitle: "معماری اکوسیستم GRMF و پروتکل اقتصادی",
-    version: "v2.4",
+    version: "v3.0",
     closeBtn: "بستن وایت‌پیپر",
     tabs: {
       overview: "نگاه کلی",
@@ -240,16 +240,16 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     overview: {
       execTitle: "خلاصه مدیریتی",
-      execBody: "پروژه GRMF یک اکوسیستم مالی غیرمتمرکز Web3 بر بستر بلاکچین TON است. این پروژه جهت یکپارچه‌سازی تراکنش‌های خرد، استخراج مبتنی بر مأموریت، سطوح ارتقای ثروت و حاکمیت جامعه در قالب تلگرام مینی‌اپ طراحی شده است.",
-      multichainTitle: "پشتیبانی چندزنجیره‌ای",
-      multichainBody: "قراردادهای هوشمند بومی Jetton روی بلاکچین TON با پشتیبانی از پل‌های نقدینگی.",
+      execBody: "پروژه GRMF یک اکوسیستم مالی غیرمتمرکز Web3 بر بستر بلاکچین TON است. این پروژه جهت یکپارچه‌سازی تراکنش‌های خرد، استخراج مبتنی بر مأموریت و سطوح ارتقای ثروت طراحی شده است.",
+      multichainTitle: "دارایی‌های بومی TON",
+      multichainBody: "قراردادهای هوشمند GRMF (Jetton) روی شبکه اصلی TON با نقدینگی عمیق مستقر شده‌اند.",
       rankTitle: "مکانیسم رتبه‌بندی",
       rankBody: "سیستم ۱۰ سطحی ارتقای ثروت که تعامل و فعالیت مستمر کاربران را پاداش می‌دهد.",
       objectivesTitle: "اهداف اصلی",
       objectivesList: [
-        "دسترسی عادلانه به بازدهی‌های خرد غیرمتمرکز",
+        "یکپارچگی کامل با اکوسیستم TON DeFi",
         "توزیع شفاف پاداش‌ها از طریق قراردادهای هوشمند",
-        "استخرهای نقدینگی یکپارچه با مکانیسم توکن‌سوزی خودکار"
+        "رشد جامعه محور از طریق مشارکت فعال"
       ]
     },
     tokenomics: {
@@ -257,29 +257,29 @@ const TRANSLATIONS: Record<Language, Translations> = {
       totalSupply: "۱,۰۰۰,۰۰۰,۰۰۰ GRMF",
       community: "پاداش‌های جامعه و استخراج",
       ecosystem: "اکوسیستم و نقدینگی",
-      team: "توسعه و تیم (قفل ۲۴ ماهه)",
+      team: "توسعه و تیم (دوره واگذاری)",
       marketing: "بازاریابی و همکاران",
-      deflationTitle: "🔥 مکانیسم ضدتورمی",
-      deflationBody: "۱٪ از کارمزد تمام سواپ‌ها به صورت دائمی از گردش سوزانده می‌شود تا نایابی و ارزش توکن افزایش یابد."
+      deflationTitle: "🔥 پایداری اقتصادی",
+      deflationBody: "GRMF از مدیریت نقدینگی پیشرفته و پروتکل‌های توکن‌سوزی انتخابی برای حفظ رشد و کارایی اکوسیستم استفاده می‌کند."
     },
     architecture: {
-      secTitle: "امنیت و اثبات فعالیت",
-      secBody: "پروتکل از اثبات‌های رمزنگاری شده کلاینت-سرور و قوانین امنیتی پیشرفته برای جلوگیری از ربات‌ها و همگام‌سازی سریع استفاده می‌کند.",
+      secTitle: "امنیت بلاکچین TON",
+      secBody: "استفاده از سرعت بالا و امنیت PoS شبکه TON برای تضمین نهایی شدن فوری تراکنش‌ها.",
       xpTitle: "پروتکل XP و سطوح ثروت",
-      xpBody: "امتیازات XP برای هر فعالیت تاییدشده اعطا می‌شود. با افزایش XP، کاربران از رتبه 'فقیر' تا 'ارباب ثروت' ارتقا می‌یابند.",
-      tonTitle: "اتصال به کیف‌پول TON Connect",
-      tonBody: "اتصال غیرامانی مستقیم کیف‌پول از طریق پروتکل TON Connect v2 برای تضمین مالکیت مطلق توکن‌های Jetton."
+      xpBody: "امتیازات XP برای هر فعالیت تاییدشده اعطا می‌شود. با افزایش XP، کاربران از رتبه 'فقير' تا 'ارباب ثروت' ارتقا می‌يابند.",
+      tonTitle: "اتصال TON Connect 2.0",
+      tonBody: "پشتیبانی کامل از کیف‌پول‌های غیرامانی مانند Tonkeeper، که به شما کنترل مطلق روی دارایی‌های GRMF می‌دهد."
     },
     roadmap: {
-      p1Phase: "فاز ۱ • Q3 2026",
-      p1Title: "راه‌اندازی اکوسیستم و TGE",
-      p1Body: "عرضه تلگرام مینی‌اپ، استخراج مأموریتی، سیستم XP و موتور ارجاع کاربران.",
+      p1Phase: "فاز ۱ • تکمیل شده",
+      p1Title: "یکپارچگی TON و TGE",
+      p1Body: "انتقال موفق به توکن GRMF و لیست شدن رسمی در TON.",
       p2Phase: "فاز ۲ • Q4 2026",
-      p2Title: "ضرب توکن روی زنجیره و استیکینگ",
-      p2Body: "استقرار قرارداد هوشمند Jetton، استخرهای نقدینگی DEX و صندوق‌های استیکینگ.",
+      p2Title: "توسعه DeFi",
+      p2Body: "پروتکل‌های وام‌دهی مبتنی بر GRMF، صندوق‌های استیکینگ پیشرفته و پل‌های TON.",
       p3Phase: "فاز ۳ • Q1 2027",
-      p3Title: "لیست شدن در صرافی‌ها و حاکمیت DAO",
-      p3Body: "لیست شدن در صرافی‌های بزرگ (CEX)، رای‌گیری حاکمیتی برای دارندگان رتبه و توسعه چندزنجیره‌ای."
+      p3Title: "اکوسیستم جهانی",
+      p3Body: "لیست شدن در صرافی‌های تراز اول (CEX)، اجرای حاکمیت DAO و یکپارچگی با TON Space."
     }
   }
 };

@@ -26,13 +26,14 @@ interface AchievementsModalProps {
   userProfile: any;
 }
 
-export const AchievementsModal: React.FC<AchievementsModalProps> = ({
-  isOpen,
+export const AchievementsModal: React.FC<AchievementsModalProps> = ({ 
+  isOpen, 
   onClose,
-  userProfile,
+  userProfile 
 }) => {
   const wallet = useTonWallet();
   const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [successAchievement, setSuccessAchievement] = useState<Achievement | null>(null);
 
   if (!isOpen) return null;
 
@@ -152,12 +153,13 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
   const totalClaimedCount = achievementsList.filter(a => a.isClaimed).length;
 
   const handleClaim = async (achievement: Achievement) => {
-    if (!auth.currentUser || !achievement.isUnlocked || achievement.isClaimed) return;
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId || !achievement.isUnlocked || achievement.isClaimed) return;
 
     setClaimingId(achievement.id);
     try {
-      await grantReward({
-        userId: auth.currentUser.uid,
+      const res = await grantReward({
+        userId: targetId,
         telegramId: userProfile?.telegramId,
         username: userProfile?.username || userProfile?.telegramUsername,
         firstName: userProfile?.firstName,
@@ -169,7 +171,16 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
           lastActiveAt: serverTimestamp(),
         }
       });
-      await awardXP(auth.currentUser.uid, 60);
+
+      if (res.success) {
+        await awardXP(targetId, 60);
+        setSuccessAchievement(achievement);
+        // Haptic feedback
+        const tg = (window as any).Telegram?.WebApp;
+        if (tg?.HapticFeedback) {
+          tg.HapticFeedback.notificationOccurred('success');
+        }
+      }
     } catch (err) {
       console.error('Failed to claim achievement reward:', err);
     } finally {
@@ -317,6 +328,39 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
           })}
         </div>
       </motion.div>
+
+      {/* Success Animation Overlay */}
+      <AnimatePresence>
+        {successAchievement && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.8, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.8, y: 20 }}
+              className="bg-white rounded-[32px] p-8 max-w-xs w-full text-center shadow-2xl border border-emerald-100"
+            >
+              <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Sparkles className="w-10 h-10 text-emerald-600 animate-pulse" />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 mb-1">Success!</h3>
+              <p className="text-sm text-slate-500 font-medium mb-6">
+                You've claimed <span className="text-emerald-600 font-bold">{successAchievement.rewardGRMF} GRMF</span> for the <span className="text-slate-900 font-bold">"{successAchievement.title}"</span> achievement!
+              </p>
+              <button
+                onClick={() => setSuccessAchievement(null)}
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-2xl transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
+              >
+                Awesome!
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

@@ -1,16 +1,17 @@
 import React from 'react';
 import { X, CheckCircle, ExternalLink, Loader2, ArrowRight, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { TransactionState } from '../types';
 
 interface TransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  txState: 'submitting' | 'confirming' | 'success' | 'failed';
+  txState: TransactionState;
   txHash: string | null;
-  fromAmount: string;
-  fromSymbol: string;
-  toAmount: string;
-  toSymbol: string;
+  fromAmount?: string;
+  fromSymbol?: string;
+  toAmount?: string;
+  toSymbol?: string;
 }
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
@@ -18,10 +19,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   onClose,
   txState,
   txHash,
-  fromAmount,
-  fromSymbol,
-  toAmount,
-  toSymbol,
+  fromAmount = '0',
+  fromSymbol = 'GRMF',
+  toAmount = '0',
+  toSymbol = 'TON',
 }) => {
   if (!isOpen) return null;
 
