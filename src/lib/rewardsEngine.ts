@@ -124,7 +124,6 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       },
       lastActiveAt: serverTimestamp(),
       lastActiveTimestamp: now,
-      ...extraUserUpdates
     };
 
     if (balanceType === 'both') {
@@ -132,6 +131,8 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
         GRMF: increment(amount)
       };
     }
+
+    applyDotNotationToObject(userPayload, extraUserUpdates);
 
     // Execute atomic transaction with merge set
     await runTransaction(db, async (transaction) => {
@@ -169,7 +170,6 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
         },
         lastActiveAt: serverTimestamp(),
         lastActiveTimestamp: now,
-        ...extraUserUpdates
       };
 
       if (balanceType === 'both') {
@@ -177,6 +177,8 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
           GRMF: increment(amount)
         };
       }
+
+      applyDotNotationToObject(userPayload, extraUserUpdates);
 
       await setDoc(userRef, userPayload, { merge: true });
 

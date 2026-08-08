@@ -4,13 +4,13 @@ import { useTonConnectUI } from '@tonconnect/ui-react';
 import { 
   ArrowLeftRight, 
   Wallet as WalletIcon, 
-  Trophy, 
-  ListTodo,
+  Trophy,
   User,
   Zap,
   Award,
   UserCheck,
-  Sparkles
+  Sparkles,
+  ListTodo
 } from 'lucide-react';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { 
@@ -43,28 +43,27 @@ import { PriceChart } from './components/PriceChart';
 import { PoolCard } from './components/PoolCard';
 import { WalletDrawer } from './components/WalletDrawer';
 import { TransactionModal } from './components/TransactionModal';
-import { TasksView } from './components/TasksView';
 import { AirdropView } from './components/AirdropView';
 import { ProfileView } from './components/ProfileView';
 import { ReferralsView } from './components/ReferralsView';
+import { TasksView } from './components/TasksView';
 import { TokenSelectModal } from './components/TokenSelectModal';
-import { Users } from 'lucide-react';
+import { AdminView } from './components/AdminView';
+import { Users, ShieldAlert } from 'lucide-react';
 
 import { TOKENS, POOLS } from './data/tokens';
 import { Token, TransactionState, WalletState } from './types';
 
-type ActiveView = 'swap' | 'tasks' | 'airdrop' | 'profile' | 'referrals';
+type ActiveView = 'swap' | 'tasks' | 'referrals' | 'airdrop' | 'profile' | 'admin';
 
 function normalizeAndSanitizeUserData(rawData: any) {
-  if (!rawData || typeof rawData !== 'object') return { data: rawData, dirty: false };
+  if (!rawData || typeof rawData !== 'object') return { data: rawData };
   
   // Create a shallow clone to avoid mutating the original Firestore snapshot directly
   const data = { ...rawData };
-  let dirty = false;
 
   Object.keys(rawData).forEach(key => {
     if (key.includes('.')) {
-      dirty = true;
       const parts = key.split('.');
       let target = data;
       for (let i = 0; i < parts.length - 1; i++) {
@@ -86,7 +85,7 @@ function normalizeAndSanitizeUserData(rawData: any) {
     }
   });
 
-  return { data, dirty };
+  return { data };
 }
 
 function App() {
@@ -268,20 +267,11 @@ function App() {
         const unsubProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
             const rawData = docSnap.data();
-            const { data, dirty } = normalizeAndSanitizeUserData(rawData);
+            const { data } = normalizeAndSanitizeUserData(rawData);
             const fullProfile = { id: userDocId, ...data };
             setUserProfile(fullProfile);
             setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
             setRealGrmf(data.realBalances?.GRMF || 0);
-
-            // If corrupt/legacy dot keys were found in Firestore, repair document permanently
-            if (dirty) {
-              setDoc(userRef, {
-                realBalances: data.realBalances || {},
-                betaBalances: data.betaBalances || {},
-                taskProgress: data.taskProgress || {}
-              }, { merge: true }).catch(err => console.warn("Auto-healing user doc failed:", err));
-            }
 
             // Persist locally for instant loading upon re-entry
             try {
@@ -328,7 +318,7 @@ function App() {
               updateDoc(userRef, {
                 lastActiveAt: serverTimestamp(),
                 lastActiveTimestamp: now
-              });
+              }).catch(err => console.warn("updateDoc lastActive failed:", err));
             }
 
             // Automatically update Telegram User Info (username, firstName, telegramId) if changed in Telegram
@@ -345,7 +335,7 @@ function App() {
                 ...(tgUsernameClean ? { username: tgUsernameClean, telegramUsername: tgUsernameClean } : {}),
                 ...(tgFirstNameClean ? { firstName: tgFirstNameClean } : {}),
                 ...(tgIdClean ? { telegramId: tgIdClean } : {})
-              }, { merge: true });
+              }, { merge: true }).catch(err => console.warn("setDoc tg user info failed:", err));
             }
             
             // Process referral if pending
@@ -597,17 +587,22 @@ function App() {
     const targetId = userProfile?.id || auth.currentUser?.uid;
     if (!targetId) return;
     const userRef = doc(db, 'users', targetId);
-    if (rewards.symbol === 'GRMF') {
-      await updateDoc(userRef, {
-        'betaBalances.GRMF': increment(rewards.amount),
-        'realBalances.GRMF': increment(rewards.amount),
-        openedChests: arrayUnion(chestId)
-      });
-    } else {
-      await updateDoc(userRef, {
-        [`betaBalances.${rewards.symbol}`]: increment(rewards.amount),
-        openedChests: arrayUnion(chestId)
-      });
+    
+    try {
+      if (rewards.symbol === 'GRMF') {
+        await updateDoc(userRef, {
+          'betaBalances.GRMF': increment(rewards.amount),
+          'realBalances.GRMF': increment(rewards.amount),
+          openedChests: arrayUnion(chestId)
+        });
+      } else {
+        await updateDoc(userRef, {
+          [`betaBalances.${rewards.symbol}`]: increment(rewards.amount),
+          openedChests: arrayUnion(chestId)
+        });
+      }
+    } catch (err) {
+      console.warn("Failed to open chest (quota?):", err);
     }
   };
 
@@ -618,11 +613,15 @@ function App() {
     const unclaimed = userProfile?.unclaimedReferralRewards || 0;
     if (unclaimed <= 0) return;
 
-    await updateDoc(userRef, {
-      'realBalances.GRMF': increment(unclaimed),
-      'betaBalances.GRMF': increment(unclaimed),
-      unclaimedReferralRewards: 0
-    });
+    try {
+      await updateDoc(userRef, {
+        'realBalances.GRMF': increment(unclaimed),
+        'betaBalances.GRMF': increment(unclaimed),
+        unclaimedReferralRewards: 0
+      });
+    } catch (err) {
+      console.warn("Failed to claim referrals (quota?):", err);
+    }
   };
 
   return (
@@ -674,11 +673,6 @@ function App() {
             </motion.div>
           )}
 
-          {activeView === 'tasks' && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-              <TasksView key="tasks" userProfile={userProfile} setActiveView={setActiveView} />
-            </div>
-          )}
           {activeView === 'referrals' && (
             <div className="flex-1 overflow-y-auto no-scrollbar py-2">
               <ReferralsView 
@@ -687,6 +681,11 @@ function App() {
                 onOpenChest={handleOpenChest}
                 onClaimUnclaimed={handleClaimUnclaimedReferrals}
               />
+            </div>
+          )}
+          {activeView === 'tasks' && (
+            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+              <TasksView key="tasks" userProfile={userProfile} setActiveView={setActiveView} />
             </div>
           )}
           {activeView === 'airdrop' && (
@@ -703,6 +702,11 @@ function App() {
           {activeView === 'profile' && (
             <div className="flex-1 overflow-y-auto no-scrollbar py-2">
               <ProfileView key="profile" balances={balances} userProfile={userProfile} />
+            </div>
+          )}
+          {activeView === 'admin' && (
+            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+              <AdminView key="admin" />
             </div>
           )}
         </AnimatePresence>
@@ -741,6 +745,14 @@ function App() {
             icon={<User className="w-5 h-5" />} 
             label="Profile" 
           />
+          {(userProfile?.isAdmin || userProfile?.telegramId === '123456789') && (
+            <NavButton 
+              active={activeView === 'admin'} 
+              onClick={() => setActiveView('admin')} 
+              icon={<ShieldAlert className="w-5 h-5" />} 
+              label="Admin" 
+            />
+          )}
         </div>
       </nav>
 

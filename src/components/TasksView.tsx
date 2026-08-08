@@ -1,519 +1,359 @@
-import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
-import { CheckCircle2, TrendingUp, Users, Calendar, Box, Zap, Timer, Loader2 } from 'lucide-react';
-import { doc, updateDoc, setDoc, increment, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
-import { DailyBoxModal } from './DailyBoxModal';
-import { awardXP } from '../lib/levelSystem';
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  CheckCircle2, 
+  Sparkles, 
+  Gift, 
+  Smartphone, 
+  Calendar, 
+  Flame, 
+  Award, 
+  Coins, 
+  ArrowRight,
+  ShieldCheck,
+  ExternalLink,
+  PartyPopper
+} from 'lucide-react';
+import { auth, db } from '../lib/firebase';
 import { grantReward } from '../lib/rewardsEngine';
-
-interface Task {
-  id: string;
-  title: string;
-  reward: string;
-  rewardValue: number;
-  icon: React.ReactNode;
-  category: 'daily' | 'social' | 'one-time';
-  isDaily: boolean;
-  link?: string;
-  actionType?: 'swap' | 'link';
-}
-
-const INITIAL_TASKS: Task[] = [
-  { id: 'daily-checkin', title: 'Daily Check-in', reward: '+1 GRMF', rewardValue: 1, icon: <Calendar className="w-5 h-5" />, category: 'daily', isDaily: true },
-  { id: 'daily-box', title: 'Open Daily Box', reward: '+1 GRMF', rewardValue: 1, icon: <Box className="w-5 h-5" />, category: 'daily', isDaily: true },
-  { id: 'beta-swap', title: 'Beta Swap Event', reward: '+1 GRMF', rewardValue: 1, icon: <Zap className="w-5 h-5" />, category: 'one-time', isDaily: false, actionType: 'swap' },
-  { id: 'swap-grmf-gram', title: 'Swap GRMF to GRAM', reward: '+1 GRMF', rewardValue: 1, icon: <TrendingUp className="w-5 h-5" />, category: 'one-time', isDaily: false, actionType: 'swap' },
-  { id: 'swap-grmf-not', title: 'Swap GRMF to NOT', reward: '+1 GRMF', rewardValue: 1, icon: <TrendingUp className="w-5 h-5" />, category: 'one-time', isDaily: false, actionType: 'swap' },
-  { id: 'join-channel', title: 'Join Official Channel', reward: '+1 GRMF', rewardValue: 1, icon: <Users className="w-5 h-5" />, category: 'social', isDaily: false, link: 'https://t.me/GRAM_Fi', actionType: 'link' },
-];
-
-type TaskStatus = 'idle' | 'checking' | 'claimable' | 'completed';
-
-interface TaskState {
-  status: TaskStatus;
-  lastCompletedAt?: number;
-  nextAvailableAt?: number;
-  checkingStartedAt?: number;
-}
+import { useHomeScreenShortcut } from '../hooks/useHomeScreenShortcut';
+import { serverTimestamp } from 'firebase/firestore';
 
 interface TasksViewProps {
   userProfile: any;
   setActiveView: (view: any) => void;
 }
 
-export function parseTimestampMs(val: any): number | undefined {
-  if (!val) return undefined;
-  if (typeof val === 'number') return val;
-  if (typeof val.toMillis === 'function') return val.toMillis();
-  if (typeof val.getTime === 'function') return val.getTime();
-  if (val.seconds !== undefined) return val.seconds * 1000;
-  if (val._seconds !== undefined) return val._seconds * 1000;
-  if (typeof val === 'string') {
-    const parsed = Date.parse(val);
-    if (!isNaN(parsed)) return parsed;
-  }
-  return undefined;
-}
-
 export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView }) => {
-  const [tasksState, setTasksState] = useState<Record<string, TaskState>>(() => {
-    try {
-      const cached = localStorage.getItem('grmf_tasks_state_cache');
-      if (cached) return JSON.parse(cached);
-    } catch (e) {}
-    return {};
-  });
-  const [timeLeft, setTimeLeft] = useState<Record<string, string>>({});
-  const [checkingCountdowns, setCheckingCountdowns] = useState<Record<string, number>>({});
-  const [isDailyBoxModalOpen, setIsDailyBoxModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'all' | 'daily' | 'special'>('all');
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [successModal, setSuccessModal] = useState<{ title: string; amount: number } | null>(null);
+  const [boxOpened, setBoxOpened] = useState(false);
+  const [timeLeft, setTimeLeft] = useState({ hours: 23, minutes: 59, seconds: 59 });
+  
+  const { status: shortcutStatus, addToHomeScreen } = useHomeScreenShortcut();
 
-  // Cache tasksState to localStorage
-  useEffect(() => {
-    if (Object.keys(tasksState).length > 0) {
-      try {
-        localStorage.setItem('grmf_tasks_state_cache', JSON.stringify(tasksState));
-      } catch (e) {}
-    }
-  }, [tasksState]);
+  React.useEffect(() => {
+    const updateCountdown = () => {
+      const now = new Date();
+      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const diff = tomorrow.getTime() - now.getTime();
 
-  // Sync tasksState from userProfile (Firestore snapshot) safely
-  useEffect(() => {
-    if (userProfile?.taskProgress) {
-      setTasksState(prev => {
-        const newState: Record<string, TaskState> = { ...prev };
-        const now = Date.now();
-
-        Object.entries(userProfile.taskProgress).forEach(([id, data]: [string, any]) => {
-          const lastCompletedAt = parseTimestampMs(data.lastCompletedAt);
-          const nextAvailableAt = parseTimestampMs(data.nextAvailableAt);
-          const checkingStartedAt = parseTimestampMs(data.checkingStartedAt) || prev[id]?.checkingStartedAt;
-          const taskDef = INITIAL_TASKS.find(t => t.id === id);
-
-          let status: TaskStatus = data.status || 'idle';
-
-          if (taskDef?.isDaily) {
-            if (nextAvailableAt && nextAvailableAt > now) {
-              status = 'completed';
-            } else if (nextAvailableAt && nextAvailableAt <= now) {
-              status = 'idle';
-            }
-          } else {
-            if (status === 'completed') {
-              status = 'completed';
-            }
-          }
-
-          if (status !== 'completed') {
-            if (checkingStartedAt) {
-              const elapsed = now - checkingStartedAt;
-              if (elapsed >= 5000) {
-                status = 'claimable';
-              } else {
-                status = 'checking';
-              }
-            } else {
-              const localStatus = prev[id]?.status;
-              if (localStatus === 'checking' || localStatus === 'claimable') {
-                status = localStatus;
-              }
-            }
-          }
-
-          newState[id] = {
-            status,
-            lastCompletedAt,
-            nextAvailableAt,
-            checkingStartedAt,
-          };
-        });
-
-        return newState;
-      });
-    }
-  }, [userProfile]);
-
-  // Timer loop for active task checking status (calculates remaining checking time vs checkingStartedAt)
-  useEffect(() => {
-    const checkInterval = setInterval(() => {
-      const now = Date.now();
-      const newCountdowns: Record<string, number> = {};
-
-      setTasksState(prev => {
-        let updated = false;
-        const nextTasksState = { ...prev };
-
-        Object.entries(nextTasksState).forEach(([id, state]: [string, TaskState]) => {
-          if (state.status === 'checking' && state.checkingStartedAt) {
-            const elapsed = now - state.checkingStartedAt;
-            if (elapsed >= 5000) {
-              nextTasksState[id] = {
-                ...state,
-                status: 'claimable'
-              };
-              updated = true;
-              const targetId = userProfile?.id || auth.currentUser?.uid;
-              if (targetId) {
-                setDoc(doc(db, 'users', targetId), {
-                  taskProgress: {
-                    [id]: {
-                      status: 'claimable'
-                    }
-                  }
-                }, { merge: true }).catch(() => {});
-              }
-            } else {
-              const remaining = Math.max(1, Math.ceil((5000 - elapsed) / 1000));
-              newCountdowns[id] = remaining;
-            }
-          }
-        });
-
-        if (updated) {
-          return nextTasksState;
-        }
-        return prev;
-      });
-
-      setCheckingCountdowns(newCountdowns);
-    }, 1000);
-
-    return () => clearInterval(checkInterval);
-  }, [userProfile?.id]);
-
-  // Timer loop for 24-hour countdowns
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const newTimeLeft: Record<string, string> = {};
-      const now = Date.now();
-      
-      INITIAL_TASKS.forEach(task => {
-        if (task.isDaily) {
-          const state = tasksState[task.id];
-          const nextMs = parseTimestampMs(state?.nextAvailableAt);
-
-          if (nextMs && nextMs > now) {
-            const diff = nextMs - now;
-            const hours = Math.floor(diff / (1000 * 60 * 60));
-            const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            const secs = Math.floor((diff % (1000 * 60)) / 1000);
-            newTimeLeft[task.id] = `${hours}h ${mins}m ${secs}s`;
-          } else if (state?.status === 'completed' && nextMs && nextMs <= now) {
-            // Timer expired! Reset task to idle for next day
-            setTasksState(prev => ({
-              ...prev,
-              [task.id]: { ...prev[task.id], status: 'idle', nextAvailableAt: undefined }
-            }));
-          }
-        }
-      });
-
-      setTimeLeft(newTimeLeft);
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [tasksState]);
-
-  const handleClaimDailyBox = async () => {
-    const targetId = userProfile?.id || auth.currentUser?.uid;
-    if (!targetId) return;
-
-    const state = tasksState['daily-box'];
-    const now = Date.now();
-    const nextMs = parseTimestampMs(state?.nextAvailableAt);
-
-    // Prevent double claim if in 24h cooldown
-    if (nextMs && nextMs > now) {
-      console.warn("Daily box is currently in 24h cooldown");
-      return;
-    }
-
-    // Exactly 24 hours countdown from moment of claim
-    const nextAvailable = new Date(now + 24 * 60 * 60 * 1000);
-
-    // Optimistic local state update
-    setTasksState(prev => ({
-      ...prev,
-      'daily-box': {
-        status: 'completed',
-        lastCompletedAt: now,
-        nextAvailableAt: nextAvailable.getTime()
-      }
-    }));
-
-    // Unified Reward Distribution
-    const res = await grantReward({
-      userId: targetId,
-      telegramId: userProfile?.telegramId,
-      username: userProfile?.username || userProfile?.telegramUsername,
-      firstName: userProfile?.firstName,
-      source: 'task_daily-box',
-      amount: 1,
-      balanceType: 'both',
-      extraUserUpdates: {
-        taskProgress: {
-          'daily-box': {
-            status: 'completed',
-            lastCompletedAt: serverTimestamp(),
-            nextAvailableAt: nextAvailable
-          }
-        }
-      }
-    });
-
-    if (!res || !res.success) {
-      // Rollback on failure
-      setTasksState(prev => ({
-        ...prev,
-        'daily-box': {
-          status: 'idle',
-          lastCompletedAt: undefined,
-          nextAvailableAt: undefined
-        }
-      }));
-      alert(`Failed to claim Daily Box: ${res?.message || 'Network error. Please try again.'}`);
-      return;
-    }
-
-    // Award XP
-    await awardXP(targetId, 50);
-  };
-
-  const executeTaskClaim = async (task: Task) => {
-    const targetId = userProfile?.id || auth.currentUser?.uid;
-    if (!targetId) return;
-
-    const now = Date.now();
-    const nextAvailable = task.isDaily ? new Date(now + 24 * 60 * 60 * 1000) : undefined;
-    const previousState = tasksState[task.id] || { status: 'claimable' };
-
-    // 1. Optimistic UI update
-    setTasksState(prev => ({
-      ...prev,
-      [task.id]: {
-        status: 'completed',
-        lastCompletedAt: now,
-        nextAvailableAt: task.isDaily && nextAvailable ? nextAvailable.getTime() : undefined
-      }
-    }));
-
-    // 2. Prepare structured extraUserUpdates
-    const extraUpdates: Record<string, any> = {
-      taskProgress: {
-        [task.id]: {
-          status: 'completed',
-          lastCompletedAt: serverTimestamp(),
-          ...(task.isDaily && nextAvailable ? { nextAvailableAt: nextAvailable } : {})
-        }
+      if (diff > 0) {
+        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+        const minutes = Math.floor((diff / 1000 / 60) % 60);
+        const seconds = Math.floor((diff / 1000) % 60);
+        setTimeLeft({ hours, minutes, seconds });
       }
     };
 
-    // 3. Grant reward through Unified Engine
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const taskProgress = userProfile?.taskProgress || {};
+
+  // Task 1: Home Screen Shortcut
+  const shortcutTaskCompleted = taskProgress['shortcut_tg']?.status === 'completed';
+
+  // Task 2: Daily Streak Check-in
+  const lastLoginDate = taskProgress['daily_login']?.lastDate || '';
+  const todayStr = new Date().toDateString();
+  const dailyCompletedToday = lastLoginDate === todayStr;
+
+  // Task 3: Open Mystery Box
+  const lastBoxDate = taskProgress['mystery_box']?.lastDate || '';
+  const boxCompletedToday = lastBoxDate === todayStr;
+
+  const handleClaimTask = async (taskId: string, rewardAmount: number, sourceName: string, extraUpdates: Record<string, any> = {}) => {
+    if (!auth.currentUser) return;
+    setClaimingId(taskId);
+
     try {
       const res = await grantReward({
-        userId: targetId,
+        userId: auth.currentUser.uid,
         telegramId: userProfile?.telegramId,
         username: userProfile?.username || userProfile?.telegramUsername,
         firstName: userProfile?.firstName,
-        source: `task_${task.id}`,
-        amount: task.rewardValue,
+        source: sourceName,
+        amount: rewardAmount,
         balanceType: 'both',
-        extraUserUpdates: extraUpdates
+        extraUserUpdates: {
+          ...extraUpdates,
+          lastActiveAt: serverTimestamp(),
+        }
       });
 
-      if (!res || !res.success) {
-        // Rollback local state on failure
-        setTasksState(prev => ({
-          ...prev,
-          [task.id]: previousState
-        }));
-        alert(`Failed to claim reward: ${res?.message || 'Transaction error. Please try again.'}`);
-        return;
+      if (res.success) {
+        setSuccessModal({
+          title: taskId === 'shortcut' ? 'Shortcut Added Successfully!' : taskId === 'daily_login' ? 'Daily Check-in Claimed!' : 'Mystery Box Opened!',
+          amount: rewardAmount
+        });
       }
-
-      // Trigger Telegram haptic feedback if available
-      const tg = (window as any).Telegram?.WebApp;
-      if (tg?.HapticFeedback) {
-        tg.HapticFeedback.notificationOccurred('success');
-      }
-
-      await awardXP(targetId, 40);
-    } catch (err: any) {
-      console.error(`Failed to claim task ${task.id}:`, err);
-      // Rollback local state
-      setTasksState(prev => ({
-        ...prev,
-        [task.id]: previousState
-      }));
-      alert(`Failed to claim task: ${err?.message || 'An unexpected error occurred.'}`);
+    } catch (err) {
+      console.error("Failed to claim task reward:", err);
+    } finally {
+      setClaimingId(null);
     }
   };
 
-  const handleTaskAction = async (task: Task) => {
-    if (task.id === 'daily-box') {
-      setIsDailyBoxModalOpen(true);
-      return;
-    }
-
-    const targetId = userProfile?.id || auth.currentUser?.uid;
-    if (!targetId) return;
-    const currentState = tasksState[task.id] || { status: 'idle' };
-    const now = Date.now();
-
-    // Prevent claiming if one-time task already completed or daily task in cooldown
-    if (task.isDaily) {
-      const nextMs = parseTimestampMs(currentState.nextAvailableAt);
-      if (nextMs && nextMs > now) {
-        console.warn(`Task ${task.id} is in 24h cooldown`);
-        return;
-      }
-    } else {
-      if (currentState.status === 'completed') {
-        console.warn(`One-time task ${task.id} is already permanently completed`);
-        return;
-      }
-    }
-
-    // If task is claimable, execute the claim and route rewards to Global Assets
-    if (currentState.status === 'claimable') {
-      await executeTaskClaim(task);
-      return;
-    }
-
-    // If task is idle, set persistent checking timestamp and start process
-    if (currentState.status === 'idle') {
-      // 1. Update state & save checkingStartedAt to Firestore
-      setTasksState(prev => ({
-        ...prev,
-        [task.id]: {
-          ...prev[task.id],
-          status: 'checking',
-          checkingStartedAt: now
-        }
-      }));
-      setCheckingCountdowns(prev => ({ ...prev, [task.id]: 5 }));
-
-      setDoc(doc(db, 'users', targetId), {
-        taskProgress: {
-          [task.id]: {
-            status: 'checking',
-            checkingStartedAt: now
-          }
-        }
-      }, { merge: true }).catch(err => console.warn("Error saving task checking state:", err));
-
-      // 2. Open external link or navigate view
-      if (task.actionType === 'link' && task.link) {
-        window.open(task.link, '_blank');
-      } else if (task.actionType === 'swap') {
-        setActiveView('swap');
-      }
-    }
+  const handleClaimShortcut = async () => {
+    if (shortcutStatus !== 'added') return;
+    await handleClaimTask('shortcut_tg', 1500, 'task_shortcut_tg', {
+      'taskProgress.shortcut_tg.status': 'completed',
+      'taskProgress.shortcut_tg.completedAt': Date.now()
+    });
   };
+
+  const handleDailyCheckin = async () => {
+    await handleClaimTask('daily_login', 25, 'task_daily_login', {
+      'taskProgress.daily_login.status': 'completed',
+      'taskProgress.daily_login.lastDate': todayStr,
+      'taskProgress.daily_login.completedAt': Date.now()
+    });
+  };
+
+  const handleOpenBox = async () => {
+    setBoxOpened(true);
+    await handleClaimTask('mystery_box', 35, 'task_mystery_box', {
+      'taskProgress.mystery_box.status': 'completed',
+      'taskProgress.mystery_box.lastDate': todayStr,
+      'taskProgress.mystery_box.completedAt': Date.now()
+    });
+  };
+
+  const realGrmf = userProfile?.realBalances?.GRMF || 0;
 
   return (
     <motion.div 
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex flex-col gap-6 pb-24"
+      exit={{ opacity: 0, y: -10 }}
+      className="flex flex-col gap-5 pb-8 px-1"
     >
-      <div className="flex flex-col gap-2">
-        <h2 className="text-2xl font-black text-slate-900 tracking-tighter">Earnings</h2>
-        <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Complete activities to earn real tokens</p>
+      {/* Filter Tabs */}
+      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200/80 mx-1">
+        <button
+          onClick={() => setActiveTab('all')}
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'all' 
+              ? 'bg-white text-slate-900 shadow-sm border border-slate-200/60' 
+              : 'text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          All Tasks
+        </button>
+        <button
+          onClick={() => setActiveTab('daily')}
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'daily' 
+              ? 'bg-white text-slate-900 shadow-sm border border-slate-200/60' 
+              : 'text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          Daily & Streak
+        </button>
+        <button
+          onClick={() => setActiveTab('special')}
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'special' 
+              ? 'bg-white text-slate-900 shadow-sm border border-slate-200/60' 
+              : 'text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          Special Bonus
+        </button>
       </div>
 
-      {['daily', 'social', 'one-time'].map(category => (
-        <div key={category} className="space-y-3">
-          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-            {category} Tasks
-          </h3>
-          <div className="grid gap-2">
-            {INITIAL_TASKS.filter(t => t.category === category).map((task) => {
-              const state = tasksState[task.id] || { status: 'idle' };
-              const isCompleted = state.status === 'completed';
-              const isChecking = state.status === 'checking';
-              const isClaimable = state.status === 'claimable';
-              const isLocked = isCompleted && task.isDaily && !!timeLeft[task.id];
-
-              return (
-                <div 
-                  key={task.id}
-                  onClick={() => {
-                    if (task.id === 'daily-box') {
-                      setIsDailyBoxModalOpen(true);
-                    }
-                  }}
-                  className={`flex items-center justify-between p-4 rounded-3xl border transition-all ${
-                    task.id === 'daily-box' ? 'cursor-pointer hover:border-amber-200' : ''
-                  } ${
-                    isCompleted ? 'bg-slate-50 border-slate-100 opacity-75' : 'bg-white border-slate-100 shadow-sm'
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm border ${
-                      isCompleted ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-blue-50 text-[#24A1DE] border-blue-100'
-                    }`}>
-                      {task.icon}
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-black text-slate-900 tracking-tighter">{task.title}</h4>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black text-[#24A1DE] tracking-tighter">{task.reward}</span>
-                        {isLocked && (
-                          <div className="flex items-center gap-1 text-[9px] font-bold text-amber-500 uppercase tracking-tighter">
-                            <Timer className="w-3 h-3" />
-                            {timeLeft[task.id]}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    disabled={isCompleted || isChecking}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleTaskAction(task);
-                    }}
-                    className={`min-w-[80px] h-10 px-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
-                      isCompleted 
-                        ? 'bg-slate-100 text-slate-400 cursor-default'
-                        : isChecking
-                        ? 'bg-blue-50 text-[#24A1DE] border border-blue-100 cursor-wait'
-                        : isClaimable
-                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-200 animate-bounce cursor-pointer'
-                        : 'bg-slate-900 text-white shadow-lg active:scale-95 cursor-pointer'
-                    }`}
-                  >
-                    {isCompleted ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                    ) : isChecking ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin text-[#24A1DE]" />
-                        <span>{checkingCountdowns[task.id] || 5}s</span>
-                      </>
-                    ) : isClaimable ? (
-                      'Claim'
-                    ) : (
-                      'Go'
-                    )}
-                  </button>
+      {/* Task List */}
+      <div className="flex flex-col gap-3.5">
+        {/* Task 1: Add to Home Screen (Official TG Shortcut) */}
+        {(activeTab === 'all' || activeTab === 'special') && shortcutStatus !== 'unsupported' && (
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center justify-between gap-3 hover:border-blue-200 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0 shadow-inner">
+              <Smartphone className="w-6 h-6" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight truncate">
+                  Add to Home Screen
+                </h4>
+                <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
+                  +1500 GRMF
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                {shortcutTaskCompleted 
+                  ? 'Task completed successfully' 
+                  : shortcutStatus === 'added' 
+                    ? 'Shortcut added! Claim your reward now.' 
+                    : 'Add official Telegram shortcut'}
+              </p>
+            </div>
+            <div>
+              {shortcutTaskCompleted ? (
+                <div className="flex items-center gap-1 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-100">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Completed</span>
                 </div>
-              );
-            })}
+              ) : shortcutStatus === 'added' ? (
+                <button
+                  onClick={handleClaimShortcut}
+                  disabled={claimingId === 'shortcut_tg'}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-emerald-500/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{claimingId === 'shortcut_tg' ? 'Claiming...' : 'Claim Reward'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <button
+                  onClick={addToHomeScreen}
+                  disabled={shortcutStatus === 'loading'}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-blue-500/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <span>Add Shortcut</span>
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        )}
 
-      <DailyBoxModal
-        isOpen={isDailyBoxModalOpen}
-        onClose={() => setIsDailyBoxModalOpen(false)}
-        isClaimed={tasksState['daily-box']?.status === 'completed'}
-        timeLeft={timeLeft['daily-box']}
-        onClaim={handleClaimDailyBox}
-        rewardValue={1}
-      />
+        {/* Task 2: Daily Streak Check-in */}
+        {(activeTab === 'all' || activeTab === 'daily') && (
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center justify-between gap-3 hover:border-amber-200 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shrink-0 shadow-inner">
+              <Flame className="w-6 h-6" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight truncate">
+                  Daily Consecutive Login
+                </h4>
+                <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 shrink-0">
+                  +25 GRMF
+                </span>
+              </div>
+              {dailyCompletedToday ? (
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5 flex items-center gap-1.5 font-mono">
+                  <span>Next Reset in:</span>
+                  <span className="font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100">
+                    {String(timeLeft.hours).padStart(2, '0')}h {String(timeLeft.minutes).padStart(2, '0')}m {String(timeLeft.seconds).padStart(2, '0')}s
+                  </span>
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Check in today to instantly earn your daily reward!
+                </p>
+              )}
+            </div>
+            <div>
+              {dailyCompletedToday ? (
+                <div className="flex items-center gap-1 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-100">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Claimed</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleDailyCheckin}
+                  disabled={claimingId === 'daily_login'}
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-amber-500/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{claimingId === 'daily_login' ? 'Claiming...' : 'Check In'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Task 3: Open Mystery Box */}
+        {(activeTab === 'all' || activeTab === 'daily' || activeTab === 'special') && (
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center justify-between gap-3 hover:border-purple-200 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600 shrink-0 shadow-inner">
+              <Gift className="w-6 h-6 animate-bounce" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight truncate">
+                  Open Mystery Box
+                </h4>
+                <span className="text-[9px] font-black text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-100 shrink-0">
+                  +35 GRMF
+                </span>
+              </div>
+              {boxCompletedToday ? (
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5 flex items-center gap-1.5 font-mono">
+                  <span>Next Box in:</span>
+                  <span className="font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-100">
+                    {String(timeLeft.hours).padStart(2, '0')}h {String(timeLeft.minutes).padStart(2, '0')}m {String(timeLeft.seconds).padStart(2, '0')}s
+                  </span>
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Daily secret mystery box opening mission
+                </p>
+              )}
+            </div>
+            <div>
+              {boxCompletedToday ? (
+                <div className="flex items-center gap-1 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-100">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Opened</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleOpenBox}
+                  disabled={claimingId === 'mystery_box'}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-purple-500/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{claimingId === 'mystery_box' ? 'Opening...' : 'Open Box'}</span>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Success Modal Notification */}
+      <AnimatePresence>
+        {successModal && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/85 backdrop-blur-md p-6">
+            <motion.div
+              initial={{ scale: 0.85, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.85, opacity: 0, y: 20 }}
+              className="bg-white rounded-3xl p-6 max-w-xs w-full text-center shadow-2xl border border-slate-100 relative overflow-hidden"
+            >
+              <div className="absolute -top-10 -right-10 w-32 h-32 bg-amber-400/20 rounded-full blur-xl pointer-events-none" />
+
+              <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-4 border border-amber-200 shadow-inner">
+                <PartyPopper className="w-8 h-8" />
+              </div>
+
+              <h3 className="text-base font-black text-slate-900 mb-1">
+                {successModal.title}
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Successfully credited to your account!
+              </p>
+
+              <div className="bg-amber-50 rounded-2xl p-3 border border-amber-200/80 mb-5 flex items-center justify-center gap-2">
+                <Coins className="w-5 h-5 text-amber-600" />
+                <span className="text-base font-black text-amber-700">+{successModal.amount} GRMF</span>
+              </div>
+
+              <button
+                onClick={() => setSuccessModal(null)}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-3 rounded-xl shadow-lg transition-all cursor-pointer active:scale-95"
+              >
+                Awesome, Collect!
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };
-

@@ -1,82 +1,47 @@
-import { 
-  db 
-} from './firebase';
+import { db } from './firebase';
 import { 
   collection, 
   doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  setDoc, 
-  updateDoc, 
-  increment, 
-  arrayUnion, 
-  serverTimestamp
+  getDoc,
+  setDoc,
+  runTransaction,
+  serverTimestamp,
+  query,
+  where,
+  getDocs,
+  orderBy
 } from 'firebase/firestore';
-import { grantReward } from './rewardsEngine';
 
 const LOCAL_STORAGE_KEY = 'grmf_pending_referrer';
 
-/**
- * Extracts referral code from all possible Telegram Mini App entry points:
- * 1. window.Telegram.WebApp.initDataUnsafe.start_param
- * 2. window.Telegram.WebApp.initData query parameters
- * 3. URL search params (?startapp=, ?tgWebAppStartParam=, ?start=, ?ref=)
- * 4. URL hash params (#tgWebAppStartParam=, etc.)
- * 5. LocalStorage fallback
- */
 export const extractAndStoreReferralCode = (): string | null => {
   try {
     const tg = (window as any).Telegram?.WebApp;
     let rawParam: string | null = null;
-
-    // 1. Direct Telegram WebApp start_param
+    
     if (tg?.initDataUnsafe?.start_param) {
       rawParam = String(tg.initDataUnsafe.start_param);
     }
-
-    // 2. Parse inside initData string if available
+    
     if (!rawParam && tg?.initData) {
       const parsed = new URLSearchParams(tg.initData);
-      rawParam = parsed.get('start_param') || parsed.get('startapp') || parsed.get('tgWebAppStartParam');
+      rawParam = parsed.get('start_param') || parsed.get('startapp');
     }
-
-    // 3. Search parameters in window.location
+    
     if (!rawParam) {
       const urlParams = new URLSearchParams(window.location.search);
-      rawParam = urlParams.get('startapp') 
-        || urlParams.get('tgWebAppStartParam') 
-        || urlParams.get('start_param') 
-        || urlParams.get('start') 
-        || urlParams.get('ref');
+      rawParam = urlParams.get('startapp') || urlParams.get('start') || urlParams.get('ref');
     }
-
-    // 4. Hash parameters
-    if (!rawParam && window.location.hash) {
-      const hashStr = window.location.hash.replace(/^#/, '');
-      const hashParams = new URLSearchParams(hashStr);
-      rawParam = hashParams.get('tgWebAppStartParam') 
-        || hashParams.get('startapp') 
-        || hashParams.get('start_param') 
-        || hashParams.get('start') 
-        || hashParams.get('ref');
-    }
-
-    // 5. Check localStorage fallback
+    
     if (!rawParam) {
       rawParam = localStorage.getItem(LOCAL_STORAGE_KEY);
     }
-
+    
     if (!rawParam) return null;
-
-    // Clean prefix: ref_tg_1368899842 -> 1368899842
-    const cleanCode = String(rawParam)
-      .replace(/^ref_tg_/, '')
-      .replace(/^ref_/, '')
-      .replace(/^tg_/, '')
-      .trim();
-
+    
+    // Clean prefix 'ref_'
+    const cleanCode = String(rawParam).replace(/^ref_/, '').replace(/^tg_/, '').trim();
+    
     if (cleanCode && cleanCode !== 'null' && cleanCode !== 'undefined' && cleanCode !== '') {
       localStorage.setItem(LOCAL_STORAGE_KEY, cleanCode);
       return cleanCode;
@@ -87,274 +52,166 @@ export const extractAndStoreReferralCode = (): string | null => {
   return null;
 };
 
-/**
- * Searches Firestore for the referrer's user document across all potential identifiers
- */
-export const findReferrerDoc = async (referrerCode: string) => {
-  if (!referrerCode) return null;
-  const usersRef = collection(db, 'users');
-
-  // 1. Direct document ID lookup
-  try {
-    const directSnap = await getDoc(doc(db, 'users', referrerCode));
-    if (directSnap.exists()) {
-      return { ref: directSnap.ref, data: directSnap.data(), id: directSnap.id };
-    }
-  } catch (e) {
-    // Continue searching
-  }
-
-  // 2. Search telegramId as Number
-  const numCode = Number(referrerCode);
-  if (!isNaN(numCode)) {
-    try {
-      const qNum = query(usersRef, where('telegramId', '==', numCode));
-      const snapNum = await getDocs(qNum);
-      if (!snapNum.empty) {
-        return { ref: snapNum.docs[0].ref, data: snapNum.docs[0].data(), id: snapNum.docs[0].id };
-      }
-    } catch (e) {
-      // Continue searching
-    }
-  }
-
-  // 3. Search telegramId as String
-  try {
-    const qStr = query(usersRef, where('telegramId', '==', String(referrerCode)));
-    const snapStr = await getDocs(qStr);
-    if (!snapStr.empty) {
-      return { ref: snapStr.docs[0].ref, data: snapStr.docs[0].data(), id: snapStr.docs[0].id };
-    }
-  } catch (e) {
-    // Continue searching
-  }
-
-  // 4. Search username or telegramUsername
-  const cleanUsername = referrerCode.toLowerCase().replace(/^@/, '');
-  try {
-    const qTgUser = query(usersRef, where('telegramUsername', '==', cleanUsername));
-    const snapTgUser = await getDocs(qTgUser);
-    if (!snapTgUser.empty) {
-      return { ref: snapTgUser.docs[0].ref, data: snapTgUser.docs[0].data(), id: snapTgUser.docs[0].id };
-    }
-  } catch (e) {
-    // Continue searching
-  }
-
-  try {
-    const qUser = query(usersRef, where('username', '==', cleanUsername));
-    const snapUser = await getDocs(qUser);
-    if (!snapUser.empty) {
-      return { ref: snapUser.docs[0].ref, data: snapUser.docs[0].data(), id: snapUser.docs[0].id };
-    }
-  } catch (e) {
-    // Continue searching
-  }
-
-  return null;
-};
-
-export interface ProcessReferralResult {
-  success: boolean;
-  reward?: number;
-  isPremium?: boolean;
-  referrerUsername?: string;
-  referrerDocId?: string;
-}
-
-/**
- * Main function to process referrals reliably
- */
 export const processReferral = async (
   currentUid: string,
   currentUserData: any,
   tgUser?: any
-): Promise<ProcessReferralResult> => {
+): Promise<{ success: boolean; reward?: number; referrerUsername?: string; isPremium?: boolean }> => {
   if (!currentUid) return { success: false };
-
-  // Don't re-process if already processed or has referredBy set
-  if (currentUserData?.hasProcessedReferral || currentUserData?.referredBy) {
+  
+  if (currentUserData?.referredBy || currentUserData?.hasProcessedReferral) {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
     return { success: false };
   }
-
+  
   const referrerCode = extractAndStoreReferralCode();
   if (!referrerCode) return { success: false };
-
-  const currentTgId = tgUser?.id ? String(tgUser.id) : (currentUserData?.telegramId ? String(currentUserData.telegramId) : null);
-  const currentTgUsername = (tgUser?.username || currentUserData?.telegramUsername || currentUserData?.username || '').toLowerCase().replace(/^@/, '');
-
-  // Ignore Self-Referral
-  if (
-    referrerCode === currentUid || 
-    (currentTgId && referrerCode === currentTgId) ||
-    (currentTgUsername && referrerCode.toLowerCase().replace(/^@/, '') === currentTgUsername)
-  ) {
-    console.log("Self referral detected and ignored.");
+  
+  // Ignore self-referral
+  if (referrerCode === currentUid || (tgUser?.id && referrerCode === String(tgUser.id))) {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
-    await updateDoc(doc(db, 'users', currentUid), { hasProcessedReferral: true }).catch(() => {});
     return { success: false };
   }
-
+  
+  const WELCOME_BONUS = 100;
+  const REFERRER_REWARD = 250;
+  
   try {
-    const referrer = await findReferrerDoc(referrerCode);
-
-    if (!referrer || referrer.id === currentUid) {
-      console.warn(`Referrer document not found for code: ${referrerCode}`);
-      return { success: false };
-    }
-
-    const referrerDocRef = referrer.ref;
-    const referrerDocId = referrer.id;
-    const referrerData = referrer.data;
-
-    const newUsername = currentUserData?.username || tgUser?.username || `user_${currentUid.slice(0, 5)}`;
-    const isPremium = Boolean(tgUser?.is_premium || currentUserData?.isPremium);
-
-    const referrerReward = isPremium ? 100 : 30;
-    const friendReward = isPremium ? 50 : 10;
-
-    // 1. Audit document in /referrals collection
-    const refAuditId = `${referrerDocId}_${currentUid}`;
-    const refAuditRef = doc(db, 'referrals', refAuditId);
-
-    await setDoc(refAuditRef, {
-      referralId: refAuditId,
-      referrerId: referrerDocId,
-      referrerTelegramId: referrerData.telegramId || null,
-      referredUid: currentUid,
-      referredUsername: newUsername,
-      referredTelegramId: currentTgId || null,
-      isPremium: isPremium,
-      reward: referrerReward,
-      friendReward: friendReward,
-      createdAt: serverTimestamp()
-    }, { merge: true });
-
-    // 2. Update Referrer User Record
-    const newInvitedItem = {
-      uid: currentUid,
-      username: newUsername,
-      telegramId: currentTgId || null,
-      isPremium: isPremium,
-      joinedAt: new Date().toISOString(),
-      reward: referrerReward
-    };
-
-    // Filter out duplicates if invitedUsers already has this uid
-    const existingInvited = referrerData.invitedUsers || [];
-    const alreadyInList = existingInvited.some((u: any) => u.uid === currentUid || (currentTgId && u.telegramId === currentTgId));
-
-    if (!alreadyInList) {
-      await grantReward({
-        userId: referrerDocId,
-        telegramId: referrerData.telegramId,
-        username: referrerData.username || referrerData.telegramUsername,
-        source: 'referral_referrer',
-        amount: referrerReward,
-        balanceType: 'both',
-        extraUserUpdates: {
-          'referralEarnings.GRMF': increment(referrerReward),
-          inviteCount: increment(1),
-          invitedUsers: arrayUnion(newInvitedItem)
+    await runTransaction(db, async (transaction) => {
+      let referrerDocId = referrerCode;
+      
+      // Attempt to resolve if it's a telegram ID
+      const numCode = Number(referrerCode);
+      if (!isNaN(numCode)) {
+        const qNum = query(collection(db, 'users'), where('telegramId', '==', numCode));
+        const snapNum = await getDocs(qNum);
+        if (!snapNum.empty) {
+          referrerDocId = snapNum.docs[0].id;
         }
-      });
-    }
-
-    // 3. Update Referred Friend (Current User)
-    await grantReward({
-      userId: currentUid,
-      telegramId: currentTgId,
-      username: newUsername,
-      firstName: tgUser?.first_name || currentUserData?.firstName || null,
-      source: 'referral_friend',
-      amount: friendReward,
-      balanceType: 'both',
-      extraUserUpdates: {
+      }
+      
+      const referrerRef = doc(db, 'users', referrerDocId);
+      const referredRef = doc(db, 'users', currentUid);
+      
+      const [referrerDoc, referredDoc] = await Promise.all([
+        transaction.get(referrerRef),
+        transaction.get(referredRef)
+      ]);
+      
+      if (!referrerDoc.exists()) {
+        throw new Error("Referrer does not exist.");
+      }
+      
+      // Make sure the referred user hasn't been referred yet
+      if (referredDoc.exists() && referredDoc.data().referredBy) {
+        throw new Error("User already referred");
+      }
+      
+      const referrerData = referrerDoc.data();
+      const referredData = referredDoc.exists() ? referredDoc.data() : {};
+      
+      const newUsername = tgUser?.username || referredData?.username || `user_${currentUid.slice(0, 5)}`;
+      const tgId = tgUser?.id || referredData?.telegramId || null;
+      
+      // 1. Update Referred User (Current User)
+      const referredUpdate = {
         referredBy: referrerDocId,
         hasProcessedReferral: true,
-        referralBonusReceived: friendReward
+        'realBalances.GRMF': (referredData?.realBalances?.GRMF || 0) + WELCOME_BONUS,
+        'betaBalances.GRMF': (referredData?.betaBalances?.GRMF || 0) + WELCOME_BONUS,
+        ...(!referredDoc.exists() && { createdAt: serverTimestamp() })
+      };
+      
+      if (referredDoc.exists()) {
+        transaction.update(referredRef, referredUpdate);
+      } else {
+        transaction.set(referredRef, referredUpdate);
       }
+      
+      // 2. Update Referrer User
+      transaction.update(referrerRef, {
+        'realBalances.GRMF': (referrerData?.realBalances?.GRMF || 0) + REFERRER_REWARD,
+        'betaBalances.GRMF': (referrerData?.betaBalances?.GRMF || 0) + REFERRER_REWARD,
+        referralsCount: (referrerData?.referralsCount || 0) + 1,
+        earnedReferralCoins: (referrerData?.earnedReferralCoins || 0) + REFERRER_REWARD
+      });
+      
+      // 3. Create a public record in "referrals" collection
+      const referralRecordRef = doc(collection(db, 'referrals'));
+      transaction.set(referralRecordRef, {
+        referrerId: referrerDocId,
+        referredId: currentUid,
+        referredUsername: newUsername,
+        referredTelegramId: tgId,
+        reward: REFERRER_REWARD,
+        createdAt: serverTimestamp()
+      });
     });
-
-    // 4. Cleanup localStorage
+    
     localStorage.removeItem(LOCAL_STORAGE_KEY);
-    console.log(`Referral processed successfully! Referrer (+${referrerReward} GRMF), Referred (+${friendReward} GRMF)`);
-
-    const referrerName = referrerData.username || referrerData.telegramUsername || 'Friend';
-
-    return {
-      success: true,
-      reward: friendReward,
-      isPremium: isPremium,
-      referrerUsername: referrerName,
-      referrerDocId: referrerDocId
-    };
+    return { success: true, reward: WELCOME_BONUS };
   } catch (err) {
-    console.error("Error processing referral:", err);
+    console.error("Transaction failed:", err);
     return { success: false };
   }
 };
 
-/**
- * Background sync for referrers: checks /referrals collection to ensure all invites are counted
- */
-export const syncReferralsForUser = async (userUid: string, userProfile: any) => {
-  if (!userUid || !userProfile) return;
+export interface Milestone {
+  id: string;
+  targetCount: number;
+  rewardCoins: number;
+  vipDays?: number;
+}
 
+export const REFERRAL_MILESTONES: Milestone[] = [
+  { id: 'ref_3', targetCount: 3, rewardCoins: 500, vipDays: 1 },
+  { id: 'ref_5', targetCount: 5, rewardCoins: 1000, vipDays: 3 },
+  { id: 'ref_10', targetCount: 10, rewardCoins: 2500, vipDays: 7 },
+  { id: 'ref_25', targetCount: 25, rewardCoins: 7000, vipDays: 30 },
+];
+
+export const claimMilestone = async (userId: string, milestone: Milestone): Promise<boolean> => {
   try {
-    const tgId = userProfile.telegramId ? String(userProfile.telegramId) : null;
-    const referralsRef = collection(db, 'referrals');
-
-    // Query referrals by referrerId or referrerTelegramId
-    let q = query(referralsRef, where('referrerId', '==', userUid));
-    let snap = await getDocs(q);
-
-    if (snap.empty && tgId) {
-      q = query(referralsRef, where('referrerTelegramId', '==', tgId));
-      snap = await getDocs(q);
-    }
-
-    if (snap.empty) return;
-
-    const existingInvited = userProfile.invitedUsers || [];
-    const existingUids = new Set(existingInvited.map((i: any) => i.uid));
-    
-    let newRewardsToGain = 0;
-    const newItemsToAdd: any[] = [];
-
-    snap.docs.forEach((docSnap) => {
-      const data = docSnap.data();
-      if (!existingUids.has(data.referredUid)) {
-        newItemsToAdd.push({
-          uid: data.referredUid,
-          username: data.referredUsername || 'Telegram User',
-          telegramId: data.referredTelegramId || null,
-          isPremium: Boolean(data.isPremium),
-          joinedAt: data.createdAt ? new Date(data.createdAt.seconds * 1000).toISOString() : new Date().toISOString(),
-          reward: data.reward || 30
-        });
-        newRewardsToGain += (data.reward || 30);
+    await runTransaction(db, async (transaction) => {
+      const userRef = doc(db, 'users', userId);
+      const userDoc = await transaction.get(userRef);
+      if (!userDoc.exists()) throw new Error("User not found");
+      
+      const data = userDoc.data();
+      const count = data.referralsCount || 0;
+      const claimed = data.claimedMilestones || [];
+      
+      if (count < milestone.targetCount) {
+        throw new Error("Not enough referrals");
       }
-    });
-
-    if (newItemsToAdd.length > 0) {
-      await grantReward({
-        userId: userUid,
-        telegramId: tgId,
-        username: userProfile.username || userProfile.telegramUsername,
-        source: 'referral_sync',
-        amount: newRewardsToGain,
-        balanceType: 'both',
-        extraUserUpdates: {
-          'referralEarnings.GRMF': increment(newRewardsToGain),
-          inviteCount: increment(newItemsToAdd.length),
-          invitedUsers: arrayUnion(...newItemsToAdd)
-        }
+      if (claimed.includes(milestone.id)) {
+        throw new Error("Milestone already claimed");
+      }
+      
+      transaction.update(userRef, {
+        'realBalances.GRMF': (data.realBalances?.GRMF || 0) + milestone.rewardCoins,
+        'betaBalances.GRMF': (data.betaBalances?.GRMF || 0) + milestone.rewardCoins,
+        claimedMilestones: [...claimed, milestone.id],
+        ...(milestone.vipDays ? { vipDays: (data.vipDays || 0) + milestone.vipDays } : {})
       });
-      console.log(`Synced ${newItemsToAdd.length} missing referrals for user ${userUid}`);
-    }
+    });
+    return true;
   } catch (err) {
-    console.error("Error syncing referrals:", err);
+    console.error("Claim milestone failed:", err);
+    return false;
   }
+};
+
+export const getReferredFriends = async (userId: string) => {
+  const q = query(
+    collection(db, 'referrals'),
+    where('referrerId', '==', userId),
+    orderBy('createdAt', 'desc')
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+};
+
+export const syncReferralsForUser = async (userUid: string, userProfile: any) => {
+  // Now using runTransaction in processReferral, so this can be a no-op or implemented later
 };

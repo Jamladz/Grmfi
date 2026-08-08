@@ -8,6 +8,7 @@ export interface LevelRank {
   minXp: number;
   maxXp: number;
   badgeIcon: string;
+  imageUrl?: string;
   color: string;
   badgeBg: string;
   textColor: string;
@@ -22,6 +23,7 @@ export const LEVEL_RANKS: LevelRank[] = [
     minXp: 0,
     maxXp: 100,
     badgeIcon: "🪵",
+    imageUrl: "https://i.suar.me/jvn9x/l",
     color: "from-slate-400 to-slate-600",
     badgeBg: "bg-slate-100 border-slate-300 text-slate-700",
     textColor: "text-slate-600",
@@ -34,6 +36,7 @@ export const LEVEL_RANKS: LevelRank[] = [
     minXp: 100,
     maxXp: 250,
     badgeIcon: "🥉",
+    imageUrl: "https://i.suar.me/dgPj1/l",
     color: "from-amber-600 to-amber-800",
     badgeBg: "bg-amber-100 border-amber-300 text-amber-800",
     textColor: "text-amber-700",
@@ -46,6 +49,7 @@ export const LEVEL_RANKS: LevelRank[] = [
     minXp: 250,
     maxXp: 500,
     badgeIcon: "⚙️",
+    imageUrl: "https://i.suar.me/8zYaV/l",
     color: "from-orange-500 to-amber-600",
     badgeBg: "bg-orange-100 border-orange-300 text-orange-800",
     textColor: "text-orange-700",

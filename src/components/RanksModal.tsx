@@ -76,9 +76,15 @@ export const RanksModal: React.FC<RanksModalProps> = ({ isOpen, onClose, userPro
                 >
                   <div className="flex items-center justify-between gap-2.5">
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow-xs border shrink-0 ${rank.badgeBg}`}>
-                        {rank.badgeIcon}
-                      </div>
+                      {rank.imageUrl ? (
+                        <div className="w-11 h-11 shrink-0 flex items-center justify-center drop-shadow-md">
+                          <img src={rank.imageUrl} alt={rank.name} className="w-full h-full object-contain" />
+                        </div>
+                      ) : (
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow-xs border shrink-0 ${rank.badgeBg}`}>
+                          {rank.badgeIcon}
+                        </div>
+                      )}
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">

@@ -5,6 +5,7 @@ import { TOKENS } from '../data/tokens';
 import { AchievementsModal } from './AchievementsModal';
 import { RanksModal } from './RanksModal';
 import { WhitepaperModal } from './WhitepaperModal';
+import { HomeScreenShortcutMenuItem } from './HomeScreenShortcutMenuItem';
 import { getUserTotalXp, getUserLevelInfo } from '../lib/levelSystem';
 
 interface ProfileViewProps {
@@ -69,8 +70,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
               )}
             </div>
           </div>
-          <div className="absolute -bottom-1 -right-1 bg-amber-500 p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-xs">
-            <span>{currentRank.badgeIcon}</span>
+          <div className="absolute -bottom-1 -right-1">
+            {currentRank.imageUrl ? (
+              <div className="w-8 h-8 flex items-center justify-center drop-shadow-md">
+                <img src={currentRank.imageUrl} alt={currentRank.name} className="w-full h-full object-contain" />
+              </div>
+            ) : (
+              <div className="bg-amber-500 p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-xs">
+                <span>{currentRank.badgeIcon}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -80,8 +89,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
 
         {/* Dynamic Level & Rank Badge */}
         <div className="flex items-center gap-2 mt-1.5">
-          <span className={`text-[11px] font-black px-3 py-0.5 rounded-full border shadow-sm flex items-center gap-1 ${currentRank.badgeBg}`}>
-            <span>{currentRank.badgeIcon}</span>
+          <span className={`text-[11px] font-black px-3 py-0.5 rounded-full border shadow-sm flex items-center gap-1.5 ${currentRank.badgeBg}`}>
+            {currentRank.imageUrl ? (
+              <img src={currentRank.imageUrl} alt={currentRank.name} className="w-4 h-4 object-contain drop-shadow-sm" />
+            ) : (
+              <span>{currentRank.badgeIcon}</span>
+            )}
             <span>Level {currentRank.level} • {currentRank.name}</span>
           </span>
         </div>
@@ -96,9 +109,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
 
         <div className="flex items-center justify-between mb-2.5 relative z-10">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 font-bold text-base shrink-0 shadow-inner">
-              {currentRank.badgeIcon}
-            </div>
+            {currentRank.imageUrl ? (
+              <div className="w-9 h-9 shrink-0 flex items-center justify-center drop-shadow-md">
+                <img src={currentRank.imageUrl} alt={currentRank.name} className="w-full h-full object-contain" />
+              </div>
+            ) : (
+              <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 font-bold text-base shrink-0 shadow-inner">
+                {currentRank.badgeIcon}
+              </div>
+            )}
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] font-black uppercase tracking-wider text-amber-400">
@@ -139,7 +158,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
           </div>
 
           <div className="flex justify-between items-center text-[9px] text-slate-400 font-medium">
-            <span>Next: {nextRank.name} ({nextRank.badgeIcon})</span>
+            <span className="flex items-center gap-1">Next: {nextRank.name} {nextRank.imageUrl ? <img src={nextRank.imageUrl} className="w-3 h-3 object-contain drop-shadow-sm" alt="" /> : `(${nextRank.badgeIcon})`}</span>
             <span>
               {isMaxLevel ? 'Max Rank' : `${xpCurrentLevel}/${xpNeededForNext} XP`}
             </span>
@@ -193,6 +212,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile 
 
       {/* Menu Options */}
       <div className="flex flex-col gap-2">
+        <HomeScreenShortcutMenuItem />
         <MenuButton 
           icon={<Star className="w-4 h-4 text-amber-500" />} 
           label="Wealth Tiers & Ranks" 
