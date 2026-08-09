@@ -5,7 +5,6 @@ import { TonConnectButton } from '@tonconnect/ui-react';
 interface HeaderProps {
   onOpenWalletDrawer: () => void;
   onOpenSettings: () => void;
-  onOpenAdmin?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({

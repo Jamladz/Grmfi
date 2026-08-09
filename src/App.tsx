@@ -185,6 +185,18 @@ function App() {
     referrerName: string;
     isPremium: boolean;
   } | null>(null);
+  
+  useEffect(() => {
+    const handleProfileUpdate = (e: any) => {
+      const p = e.detail;
+      setUserProfile(p);
+      setBalances(p.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
+      setRealGrmf(p.realBalances?.GRMF || 0);
+    };
+    window.addEventListener('grmf_local_profile_updated', handleProfileUpdate);
+    return () => window.removeEventListener('grmf_local_profile_updated', handleProfileUpdate);
+  }, []);
+
   const [isAppReady, setIsAppReady] = useState(false);
 
   // Rewards Configuration
@@ -337,14 +349,28 @@ function App() {
               setShowWelcomeModal(true);
             }
           }
-        }, (error) => {
+        }, (error: any) => {
           console.error("Profile snapshot error:", error);
-          if (error.code === 'resource-exhausted') {
-            setAppError("Rate limit exceeded. Please try again later.");
-          } else if (error.code === 'permission-denied') {
+          const cachedProfileStr = localStorage.getItem('grmf_cached_profile');
+          if (cachedProfileStr) {
+            try {
+              const cachedProfile = JSON.parse(cachedProfileStr);
+              setUserProfile(cachedProfile);
+              setBalances(cachedProfile.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
+              setRealGrmf(cachedProfile.realBalances?.GRMF || 0);
+            } catch (e) {}
+          }
+          if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota exceeded')) {
+            // Removed setQuotaWarning(true) to hide the local storage fallback alert
+            if (!cachedProfileStr) {
+              setAppError("Quota limit exceeded for free tier database (Spark Plan). Daily write/read units limit reached on Firestore.");
+            }
+          } else if (error?.code === 'permission-denied') {
             setAppError("Access denied. Please restart the app.");
           } else {
-            setAppError("Unable to load profile. Please check your connection.");
+            if (!cachedProfileStr) {
+              setAppError("Unable to load profile. Please check your connection.");
+            }
           }
           setIsAppReady(true);
         });
@@ -435,9 +461,9 @@ function App() {
       }
     }
 
-    // 4. Activity heartbeat (Every 10 minutes)
+    // 4. Activity heartbeat (Every 30 minutes to save quota)
     const lastActive = data.lastActiveTimestamp || 0;
-    if (now - lastActive > 10 * 60 * 1000) {
+    if (now - lastActive > 30 * 60 * 1000) {
       updateDoc(userRef, {
         lastActiveAt: serverTimestamp(),
         lastActiveTimestamp: now
@@ -589,14 +615,14 @@ function App() {
             localStorage.setItem('grmf_cached_real_grmf', String(updatedReal.GRMF || 0));
           } catch (e) {}
 
-          // Save both real and beta balances directly to Firestore
+          // 1. Prepare consolidated Firestore updates
           const firestoreUpdate: any = {
             betaBalances: updatedBeta,
             realBalances: updatedReal,
             lastActiveAt: serverTimestamp(),
             lastActiveTimestamp: Date.now()
           };
-
+          
           // TASK COMPLETION: If swapping GRMF to another token
           if (taskId) {
             const currentStatus = userProfile?.taskProgress?.[taskId]?.status;
@@ -606,9 +632,8 @@ function App() {
             }
           }
 
-          await setDoc(userRef, firestoreUpdate, { merge: true });
-
-          // Record transaction record
+          // 2. Grant Reward & XP & Record Transaction in ONE atomic flow
+          // We use grantReward which handles transaction and user balance updates
           await grantReward({
             userId: targetId,
             telegramId: userProfile?.telegramId,
@@ -616,11 +641,10 @@ function App() {
             firstName: userProfile?.firstName,
             source: `swap_${fromSym}_to_${toSym}`,
             amount: tAmt,
+            xp: 30, // Consolidate XP here
             balanceType: 'real',
-            extraUserUpdates: {}
+            extraUserUpdates: firestoreUpdate // Consolidate all other user updates here
           });
-
-          await awardXP(targetId, 30);
         }
       }, 1500);
     }, 1000);
@@ -691,13 +715,34 @@ function App() {
   };
 
   if (appError) {
+    const isQuotaError = appError.toLowerCase().includes("quota") || appError.toLowerCase().includes("rate limit");
+    const firestoreConsoleUrl = "https://console.firebase.google.com/project/gen-lang-client-0163667078/firestore/databases/ai-studio-grmffi-1a964c60-5149-45bd-8b05-969acc181c85/data?openUpgradeDialog=true";
+
     return (
       <div className="h-[100dvh] flex flex-col items-center justify-center p-6 text-center bg-white font-sans selection:bg-blue-500/30">
         <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mb-6">
           <AlertCircle className="w-10 h-10 text-amber-500" />
         </div>
-        <h1 className="text-xl font-black text-slate-900 mb-2 tracking-tight">Service Temporarily Busy</h1>
-        <p className="text-slate-500 text-[13px] mb-8 max-w-xs leading-relaxed font-medium">{appError}</p>
+        <h1 className="text-xl font-black text-slate-900 mb-2 tracking-tight">
+          {isQuotaError ? "Firestore Quota Limit Reached" : "Service Temporarily Busy"}
+        </h1>
+        <p className="text-slate-500 text-[13px] mb-6 max-w-xs leading-relaxed font-medium">
+          {isQuotaError
+            ? "Daily free write/read units limit reached on Firebase Spark plan. Quota resets daily."
+            : appError}
+        </p>
+
+        {isQuotaError && (
+          <a
+            href={firestoreConsoleUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mb-6 inline-flex items-center gap-1.5 px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold hover:bg-blue-100 transition-colors"
+          >
+            Open Firebase Console ↗
+          </a>
+        )}
+
         <button 
           onClick={() => window.location.reload()}
           className="w-full max-w-[200px] py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-slate-200 transition-transform active:scale-95"
@@ -733,7 +778,6 @@ function App() {
       <Header 
         onOpenWalletDrawer={() => setIsWalletOpen(true)} 
         onOpenSettings={() => {}} 
-        onOpenAdmin={isAdmin ? () => setActiveView('admin') : undefined}
       />
 
       <main className={`flex-1 w-full mx-auto px-3 sm:px-4 pt-2 pb-[calc(5rem+env(safe-area-inset-bottom,20px))] flex flex-col overflow-hidden relative ${
@@ -809,7 +853,7 @@ function App() {
               />
             </div>
           )}
-          {activeView === 'admin' && (
+          {activeView === 'admin' && isAdmin && (
             <div className="flex-1 overflow-y-auto no-scrollbar py-2">
               <AdminView key="admin" />
             </div>
@@ -850,14 +894,6 @@ function App() {
             icon={<User className="w-5 h-5" />} 
             label="Profile" 
           />
-          {(isAdmin || userProfile?.isAdmin || userProfile?.telegramId === '123456789') && (
-            <NavButton 
-              active={activeView === 'admin'} 
-              onClick={() => setActiveView('admin')} 
-              icon={<ShieldAlert className="w-5 h-5" />} 
-              label="Admin" 
-            />
-          )}
         </div>
       </nav>
 

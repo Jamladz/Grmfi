@@ -29,42 +29,54 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [successModal, setSuccessModal] = useState<{ title: string; amount: number } | null>(null);
   const [boxOpened, setBoxOpened] = useState(false);
-  const [timeLeft, setTimeLeft] = useState({ hours: 23, minutes: 59, seconds: 59 });
   
   const { status: shortcutStatus, addToHomeScreen } = useHomeScreenShortcut();
 
-  React.useEffect(() => {
-    const updateCountdown = () => {
-      const now = new Date();
-      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      const diff = tomorrow.getTime() - now.getTime();
-
-      if (diff > 0) {
-        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
-        const minutes = Math.floor((diff / 1000 / 60) % 60);
-        const seconds = Math.floor((diff / 1000) % 60);
-        setTimeLeft({ hours, minutes, seconds });
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  
+  const getDailyStatus = (completedAt) => {
+    if (!completedAt) return { completed: false, timeLeft: { hours: 0, minutes: 0, seconds: 0 } };
+    const diff = (completedAt + ONE_DAY_MS) - Date.now();
+    if (diff <= 0) return { completed: false, timeLeft: { hours: 0, minutes: 0, seconds: 0 } };
+    
+    return {
+      completed: true,
+      timeLeft: {
+        hours: Math.floor((diff / (1000 * 60 * 60)) % 24),
+        minutes: Math.floor((diff / 1000 / 60) % 60),
+        seconds: Math.floor((diff / 1000) % 60)
       }
     };
-
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
-    return () => clearInterval(interval);
-  }, []);
+  };
 
   const taskProgress = userProfile?.taskProgress || {};
 
+  const [dailyStatus, setDailyStatus] = useState(() => ({
+    login: getDailyStatus(taskProgress['daily_login']?.completedAt),
+    box: getDailyStatus(taskProgress['mystery_box']?.completedAt)
+  }));
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setDailyStatus({
+        login: getDailyStatus(userProfile?.taskProgress?.daily_login?.completedAt),
+        box: getDailyStatus(userProfile?.taskProgress?.mystery_box?.completedAt)
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [userProfile?.taskProgress?.daily_login?.completedAt, userProfile?.taskProgress?.mystery_box?.completedAt]);
+
   // Task 1: Home Screen Shortcut
   const shortcutTaskCompleted = taskProgress['shortcut_tg']?.status === 'completed';
+  
+  // New Task: Telegram Channel
+  const tgChannelCompleted = taskProgress['tg_channel']?.status === 'completed';
 
   // Task 2: Daily Streak Check-in
-  const lastLoginDate = taskProgress['daily_login']?.lastDate || '';
-  const todayStr = new Date().toDateString();
-  const dailyCompletedToday = lastLoginDate === todayStr;
+  const dailyCompletedToday = dailyStatus.login.completed;
 
   // Task 3: Open Mystery Box
-  const lastBoxDate = taskProgress['mystery_box']?.lastDate || '';
-  const boxCompletedToday = lastBoxDate === todayStr;
+  const boxCompletedToday = dailyStatus.box.completed;
 
   const handleClaimTask = async (taskId: string, rewardAmount: number, sourceName: string, extraUpdates: Record<string, any> = {}) => {
     const targetId = userProfile?.id || auth.currentUser?.uid;
@@ -120,6 +132,21 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     });
   };
 
+  const handleJoinChannel = async () => {
+    if ((window as any).Telegram?.WebApp?.openTelegramLink) {
+      (window as any).Telegram.WebApp.openTelegramLink('https://t.me/Grmfdex');
+    } else {
+      window.open('https://t.me/Grmfdex', '_blank');
+    }
+    // Simulate verification delay then claim
+    setTimeout(() => {
+      handleClaimTask('tg_channel', 500, 'task_tg_channel', {
+        'taskProgress.tg_channel.status': 'completed',
+        'taskProgress.tg_channel.completedAt': Date.now()
+      });
+    }, 5000);
+  };
+
   const handleClaimShortcut = async () => {
     if (shortcutStatus !== 'added') return;
     await handleClaimTask('shortcut_tg', 1500, 'task_shortcut_tg', {
@@ -131,7 +158,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
   const handleDailyCheckin = async () => {
     await handleClaimTask('daily_login', 25, 'task_daily_login', {
       'taskProgress.daily_login.status': 'completed',
-      'taskProgress.daily_login.lastDate': todayStr,
       'taskProgress.daily_login.completedAt': Date.now()
     });
   };
@@ -140,7 +166,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
     setBoxOpened(true);
     await handleClaimTask('mystery_box', 35, 'task_mystery_box', {
       'taskProgress.mystery_box.status': 'completed',
-      'taskProgress.mystery_box.lastDate': todayStr,
       'taskProgress.mystery_box.completedAt': Date.now()
     });
   };
@@ -260,7 +285,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
                 <p className="text-[11px] text-slate-500 font-medium mt-0.5 flex items-center gap-1.5 font-mono">
                   <span>Next Reset in:</span>
                   <span className="font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100">
-                    {String(timeLeft.hours).padStart(2, '0')}h {String(timeLeft.minutes).padStart(2, '0')}m {String(timeLeft.seconds).padStart(2, '0')}s
+                    {String(dailyStatus.login.timeLeft.hours).padStart(2, '0')}h {String(dailyStatus.login.timeLeft.minutes).padStart(2, '0')}m {String(dailyStatus.login.timeLeft.seconds).padStart(2, '0')}s
                   </span>
                 </p>
               ) : (
@@ -308,7 +333,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
                 <p className="text-[11px] text-slate-500 font-medium mt-0.5 flex items-center gap-1.5 font-mono">
                   <span>Next Box in:</span>
                   <span className="font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-100">
-                    {String(timeLeft.hours).padStart(2, '0')}h {String(timeLeft.minutes).padStart(2, '0')}m {String(timeLeft.seconds).padStart(2, '0')}s
+                    {String(dailyStatus.box.timeLeft.hours).padStart(2, '0')}h {String(dailyStatus.box.timeLeft.minutes).padStart(2, '0')}m {String(dailyStatus.box.timeLeft.seconds).padStart(2, '0')}s
                   </span>
                 </p>
               ) : (
@@ -337,6 +362,46 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
           </div>
         )}
 
+        {/* New Task: Join Channel */}
+        {(activeTab === 'all' || activeTab === 'special') && (
+          <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center justify-between gap-3 hover:border-blue-200 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0 shadow-inner">
+              <ExternalLink className="w-6 h-6" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight truncate">
+                  Join GRMF Channel
+                </h4>
+                <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
+                  +500 GRMF
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                {tgChannelCompleted 
+                  ? 'Task completed successfully' 
+                  : 'Join our official Telegram channel'}
+              </p>
+            </div>
+            <div>
+              {tgChannelCompleted ? (
+                <div className="flex items-center gap-1 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-100">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Completed</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleJoinChannel}
+                  disabled={claimingId === 'tg_channel'}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-blue-500/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{claimingId === 'tg_channel' ? 'Verifying...' : 'Join Channel'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        
         {/* Swap Mission Tasks */}
         {(activeTab === 'all' || activeTab === 'special') && swapTasks.map((task) => {
           const rawTask = taskProgress?.[task.id];
@@ -416,7 +481,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
                 {successModal.title}
               </h3>
               <p className="text-xs text-slate-500 mb-4">
-                Successfully credited to your account!
+                Reward calculated and securely added to your <span className="font-bold text-slate-700">Global Assets</span> profile.
               </p>
 
               <div className="bg-amber-50 rounded-2xl p-3 border border-amber-200/80 mb-5 flex items-center justify-center gap-2">

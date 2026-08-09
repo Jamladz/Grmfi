@@ -165,6 +165,7 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
         firstName: userProfile?.firstName,
         source: `achievement_${achievement.id}`,
         amount: achievement.rewardGRMF,
+        xp: 60, // Consolidate XP here
         balanceType: 'both',
         extraUserUpdates: {
           [`claimedAchievements.${achievement.id}`]: true,
@@ -173,7 +174,6 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
       });
 
       if (res.success) {
-        await awardXP(targetId, 60);
         setSuccessAchievement(achievement);
         // Haptic feedback
         const tg = (window as any).Telegram?.WebApp;

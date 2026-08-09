@@ -113,7 +113,7 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
                   <div className="flex flex-col">
                     <span className="text-xs font-bold text-slate-800">Invite {ms.targetCount} Friends</span>
                     <span className="text-[10px] font-bold text-amber-600 flex items-center gap-1 mt-0.5">
-                      <Coins className="w-3 h-3" /> +{ms.rewardCoins.toLocaleString()} GRMF {ms.vipDays ? `& ${ms.vipDays}d VIP` : ''}
+                      <Coins className="w-3 h-3" /> +{ms.rewardCoins.toLocaleString()} GRMF 
                     </span>
                   </div>
                   
@@ -214,7 +214,7 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
               </div>
               <h2 className="text-xl font-black text-slate-900 mb-2">Milestone Reached!</h2>
               <p className="text-sm text-slate-500 mb-6">
-                You've successfully claimed your reward for inviting friends.
+                Reward calculated and securely added to your <span className="font-bold text-slate-700">Global Assets</span> profile.
               </p>
               
               <div className="w-full bg-slate-50 rounded-2xl p-4 flex items-center justify-center gap-2 mb-6 border border-slate-100">

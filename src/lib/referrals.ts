@@ -77,19 +77,18 @@ export const processReferral = async (
   const REFERRER_REWARD = 250;
   
   try {
-    await runTransaction(db, async (transaction) => {
-      let referrerDocId = referrerCode;
-      
-      // Attempt to resolve if it's a telegram ID
-      const numCode = Number(referrerCode);
-      if (!isNaN(numCode)) {
-        const qNum = query(collection(db, 'users'), where('telegramId', '==', numCode));
-        const snapNum = await getDocs(qNum);
-        if (!snapNum.empty) {
-          referrerDocId = snapNum.docs[0].id;
-        }
+    // Attempt to resolve if it's a telegram ID before transaction
+    let referrerDocId = referrerCode;
+    const numCode = Number(referrerCode);
+    if (!isNaN(numCode)) {
+      const qNum = query(collection(db, 'users'), where('telegramId', '==', numCode));
+      const snapNum = await getDocs(qNum);
+      if (!snapNum.empty) {
+        referrerDocId = snapNum.docs[0].id;
       }
-      
+    }
+
+    await runTransaction(db, async (transaction) => {
       const referrerRef = doc(db, 'users', referrerDocId);
       const referredRef = doc(db, 'users', currentUid);
       
@@ -98,16 +97,12 @@ export const processReferral = async (
         transaction.get(referredRef)
       ]);
       
-      if (!referrerDoc.exists()) {
-        throw new Error("Referrer does not exist.");
-      }
-      
       // Make sure the referred user hasn't been referred yet
       if (referredDoc.exists() && referredDoc.data().referredBy) {
         throw new Error("User already referred");
       }
       
-      const referrerData = referrerDoc.data();
+      const referrerData = referrerDoc.exists() ? referrerDoc.data() : {};
       const referredData = referredDoc.exists() ? referredDoc.data() : {};
       
       const newUsername = tgUser?.username || referredData?.username || `user_${currentUid.slice(0, 5)}`;
@@ -119,7 +114,7 @@ export const processReferral = async (
         hasProcessedReferral: true,
         'realBalances.GRMF': (referredData?.realBalances?.GRMF || 0) + WELCOME_BONUS,
         'betaBalances.GRMF': (referredData?.betaBalances?.GRMF || 0) + WELCOME_BONUS,
-        ...(!referredDoc.exists() && { createdAt: serverTimestamp() })
+        ...(!referredDoc.exists() && { createdAt: serverTimestamp(), telegramId: tgId, username: newUsername })
       };
       
       if (referredDoc.exists()) {
@@ -129,12 +124,19 @@ export const processReferral = async (
       }
       
       // 2. Update Referrer User
-      transaction.update(referrerRef, {
+      const referrerUpdate = {
         'realBalances.GRMF': (referrerData?.realBalances?.GRMF || 0) + REFERRER_REWARD,
         'betaBalances.GRMF': (referrerData?.betaBalances?.GRMF || 0) + REFERRER_REWARD,
         referralsCount: (referrerData?.referralsCount || 0) + 1,
-        earnedReferralCoins: (referrerData?.earnedReferralCoins || 0) + REFERRER_REWARD
-      });
+        earnedReferralCoins: (referrerData?.earnedReferralCoins || 0) + REFERRER_REWARD,
+        ...(!referrerDoc.exists() && { createdAt: serverTimestamp() })
+      };
+      
+      if (referrerDoc.exists()) {
+        transaction.update(referrerRef, referrerUpdate);
+      } else {
+        transaction.set(referrerRef, referrerUpdate);
+      }
       
       // 3. Create a public record in "referrals" collection
       const referralRecordRef = doc(collection(db, 'referrals'));
@@ -150,8 +152,12 @@ export const processReferral = async (
     
     localStorage.removeItem(LOCAL_STORAGE_KEY);
     return { success: true, reward: WELCOME_BONUS };
-  } catch (err) {
+  } catch (err: any) {
     console.error("Transaction failed:", err);
+    if (err?.code === 'resource-exhausted') {
+       // Quota exceeded during transaction
+       console.warn("Quota exceeded during referral transaction. Referral might not have processed fully in DB.");
+    }
     return { success: false };
   }
 };
@@ -160,14 +166,14 @@ export interface Milestone {
   id: string;
   targetCount: number;
   rewardCoins: number;
-  vipDays?: number;
+  
 }
 
 export const REFERRAL_MILESTONES: Milestone[] = [
-  { id: 'ref_3', targetCount: 3, rewardCoins: 500, vipDays: 1 },
-  { id: 'ref_5', targetCount: 5, rewardCoins: 1000, vipDays: 3 },
-  { id: 'ref_10', targetCount: 10, rewardCoins: 2500, vipDays: 7 },
-  { id: 'ref_25', targetCount: 25, rewardCoins: 7000, vipDays: 30 },
+  { id: 'ref_3', targetCount: 3, rewardCoins: 500 },
+  { id: 'ref_5', targetCount: 5, rewardCoins: 1000 },
+  { id: 'ref_10', targetCount: 10, rewardCoins: 2500 },
+  { id: 'ref_25', targetCount: 25, rewardCoins: 7000 },
 ];
 
 export const claimMilestone = async (userId: string, milestone: Milestone): Promise<boolean> => {
@@ -192,7 +198,7 @@ export const claimMilestone = async (userId: string, milestone: Milestone): Prom
         'realBalances.GRMF': (data.realBalances?.GRMF || 0) + milestone.rewardCoins,
         'betaBalances.GRMF': (data.betaBalances?.GRMF || 0) + milestone.rewardCoins,
         claimedMilestones: [...claimed, milestone.id],
-        ...(milestone.vipDays ? { vipDays: (data.vipDays || 0) + milestone.vipDays } : {})
+        
       });
     });
     return true;

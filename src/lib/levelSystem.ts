@@ -198,13 +198,24 @@ export async function awardXP(userId?: string, amount: number = 20) {
     await setDoc(userRef, {
       xp: increment(amount)
     }, { merge: true });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
+      try {
+        const cached = localStorage.getItem('grmf_cached_profile');
+        if (cached) {
+          const profile = JSON.parse(cached);
+          profile.xp = (profile.xp || 0) + amount;
+          localStorage.setItem('grmf_cached_profile', JSON.stringify(profile));
+        }
+      } catch (e) {}
+      return;
+    }
     try {
       await updateDoc(userRef, {
         xp: increment(amount)
       });
     } catch (e) {
-      console.error("Error awarding XP:", e);
+      console.warn("Error awarding XP (handled):", e);
     }
   }
 }
