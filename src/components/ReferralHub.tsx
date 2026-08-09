@@ -36,7 +36,7 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
   };
 
   const handleShare = () => {
-    const text = `Join me on GRMF and get your Welcome Bonus! 🚀\n`;
+    const text = `\n\nJoin me on GRMF and get your Welcome Bonus! 🚀`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(text)}`;
     if ((window as any).Telegram?.WebApp?.openTelegramLink) {
       (window as any).Telegram.WebApp.openTelegramLink(shareUrl);

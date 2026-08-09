@@ -9,6 +9,7 @@ export const AdminView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'users' | 'withdrawals'>('users');
+  const [sortBy, setSortBy] = useState<'recent' | 'referrals' | 'grmf'>('referrals');
   const [stats, setStats] = useState({
     totalUsers: 0,
     active24h: 0,
@@ -16,11 +17,14 @@ export const AdminView: React.FC = () => {
     totalGrmf: 0
   });
 
-  const fetchData = async () => {
+  const fetchData = async (currentSort: string = sortBy) => {
     setLoading(true);
     try {
       // Fetch users sorted by last active for the list
-      const qUsers = query(collection(db, 'users'), orderBy('lastActiveTimestamp', 'desc'), limit(100));
+      let orderField = 'lastActiveTimestamp';
+      if (currentSort === 'referrals') orderField = 'referralsCount';
+      if (currentSort === 'grmf') orderField = 'realBalances.GRMF';
+      const qUsers = query(collection(db, 'users'), orderBy(orderField, 'desc'), limit(100));
       const snapUsers = await getDocs(qUsers);
       const usersData = snapUsers.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       setUsers(usersData);
@@ -34,7 +38,7 @@ export const AdminView: React.FC = () => {
 
       // Estimate total tokens and referrals from the fetched sample
       const localTotalGrmf = usersData.reduce((acc: number, u: any) => acc + (u.realBalances?.GRMF || 0), 0);
-      const localTotalRefs = usersData.reduce((acc: number, u: any) => acc + (u.referralCount || 0), 0);
+      const localTotalRefs = usersData.reduce((acc: number, u: any) => acc + (u.referralsCount || 0), 0);
 
       setStats({
         totalUsers: totalUsersSnap.data().count,
@@ -53,8 +57,8 @@ export const AdminView: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchData(sortBy);
+  }, [sortBy]);
 
   const handleWithdrawalStatus = async (id: string, status: 'approved' | 'rejected') => {
     try {
@@ -161,17 +165,28 @@ export const AdminView: React.FC = () => {
 
       {activeTab === 'users' ? (
         <div className="bg-white rounded-[2rem] shadow-2xl shadow-slate-200/40 border border-slate-100 overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-slate-100 flex items-center gap-4 bg-slate-50/30">
-            <div className="w-10 h-10 bg-white rounded-xl border border-slate-200 flex items-center justify-center shadow-sm">
-              <Search className="w-5 h-5 text-slate-400" />
+          <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/30">
+            <div className="flex-1 flex items-center gap-4 w-full">
+              <div className="w-10 h-10 bg-white rounded-xl border border-slate-200 flex items-center justify-center shadow-sm shrink-0">
+                <Search className="w-5 h-5 text-slate-400" />
+              </div>
+              <input 
+                type="text" 
+                placeholder="Search by Name, TG Username or ID..." 
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="bg-transparent border-none outline-none text-sm w-full text-slate-700 font-bold placeholder:text-slate-400/70"
+              />
             </div>
-            <input 
-              type="text" 
-              placeholder="Search by Name, TG Username or ID..." 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm w-full text-slate-700 font-bold placeholder:text-slate-400/70"
-            />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm outline-none cursor-pointer w-full sm:w-auto"
+            >
+              <option value="referrals">Top Referrers</option>
+              <option value="grmf">Top Tokens</option>
+              <option value="recent">Recently Active</option>
+            </select>
           </div>
           
           <div className="flex flex-col max-h-[600px] overflow-y-auto no-scrollbar">
@@ -228,8 +243,8 @@ export const AdminView: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="flex items-center gap-1">
-                        <Users className="w-2.5 h-2.5 text-slate-400" />
-                        <span className="text-[10px] text-slate-500 font-bold">{user.referralCount || 0}</span>
+                        <UserPlus className="w-3 h-3 text-emerald-500" />
+                        <span className="text-[10px] text-slate-500 font-bold">{user.referralsCount || 0} Refs</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Activity className="w-2.5 h-2.5 text-slate-400" />
