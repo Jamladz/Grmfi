@@ -106,7 +106,7 @@ export const AdminView: React.FC = () => {
           </div>
         </div>
         <button 
-          onClick={fetchData} 
+          onClick={() => fetchData()} 
           disabled={loading}
           className="p-3 bg-slate-50 text-slate-600 rounded-2xl hover:bg-slate-100 active:scale-95 transition-all border border-slate-200/50 disabled:opacity-50"
         >
