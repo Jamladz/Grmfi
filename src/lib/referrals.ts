@@ -11,6 +11,7 @@ import {
   getDocs,
   orderBy
 } from 'firebase/firestore';
+import { grantReward } from './rewardsEngine';
 
 const LOCAL_STORAGE_KEY = 'grmf_pending_referrer';
 
@@ -178,30 +179,34 @@ export const REFERRAL_MILESTONES: Milestone[] = [
 
 export const claimMilestone = async (userId: string, milestone: Milestone): Promise<boolean> => {
   try {
-    await runTransaction(db, async (transaction) => {
-      const userRef = doc(db, 'users', userId);
-      const userDoc = await transaction.get(userRef);
-      if (!userDoc.exists()) throw new Error("User not found");
-      
-      const data = userDoc.data();
-      const count = data.referralsCount || 0;
-      const claimed = data.claimedMilestones || [];
-      
-      if (count < milestone.targetCount) {
-        throw new Error("Not enough referrals");
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) return false;
+    
+    const data = userSnap.data();
+    const count = data.referralsCount || 0;
+    const claimed = data.claimedMilestones || [];
+    
+    if (count < milestone.targetCount) {
+      console.warn("Milestone claim failed: not enough referrals", { count, target: milestone.targetCount });
+      return false;
+    }
+    if (claimed.includes(milestone.id)) {
+      console.warn("Milestone claim failed: already claimed", { milestoneId: milestone.id });
+      return false;
+    }
+    
+    const res = await grantReward({
+      userId,
+      source: `milestone_${milestone.id}`,
+      amount: milestone.rewardCoins,
+      balanceType: 'both',
+      extraUserUpdates: {
+        claimedMilestones: [...claimed, milestone.id]
       }
-      if (claimed.includes(milestone.id)) {
-        throw new Error("Milestone already claimed");
-      }
-      
-      transaction.update(userRef, {
-        'realBalances.GRMF': (data.realBalances?.GRMF || 0) + milestone.rewardCoins,
-        'betaBalances.GRMF': (data.betaBalances?.GRMF || 0) + milestone.rewardCoins,
-        claimedMilestones: [...claimed, milestone.id],
-        
-      });
     });
-    return true;
+
+    return res.success;
   } catch (err) {
     console.error("Claim milestone failed:", err);
     return false;
