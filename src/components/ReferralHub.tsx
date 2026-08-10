@@ -17,7 +17,7 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
   const claimedMilestones: string[] = userProfile?.claimedMilestones || [];
   
   const tgId = userProfile?.telegramId || userProfile?.id || '12345';
-  const referralLink = `https://t.me/Grmfdex_bot/app?startapp=ref_${tgId}`;
+  const referralLink = `https://t.me/Grmfdex_bot?startapp=ref_${tgId}`;
 
   useEffect(() => {
     if (userProfile?.id) {
