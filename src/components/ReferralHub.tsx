@@ -46,10 +46,11 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
   };
 
   const handleClaim = async (milestone: any) => {
-    if (!auth.currentUser || claimingId) return;
+    const targetId = userProfile?.id || auth.currentUser?.uid;
+    if (!targetId || claimingId) return;
     setClaimingId(milestone.id);
     
-    const success = await claimMilestone(auth.currentUser.uid, milestone);
+    const success = await claimMilestone(targetId, milestone);
     if (success) {
       setSuccessModal({ amount: milestone.rewardCoins });
       // update local state optimistically or rely on snapshot
