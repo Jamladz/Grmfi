@@ -114,6 +114,7 @@ function App() {
       try {
         tg.ready();
         tg.expand();
+        tg.requestWriteAccess?.();
         // Set header color to match app theme
         tg.setHeaderColor?.('#ffffff');
         // Enable closing confirmation to prevent accidental swipes
