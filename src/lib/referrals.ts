@@ -41,7 +41,7 @@ export const extractAndStoreReferralCode = (): string | null => {
     if (!rawParam) return null;
     
     // Clean prefix 'ref_'
-    const cleanCode = String(rawParam).replace(/^ref_/, '').replace(/^tg_/, '').trim();
+    const cleanCode = String(rawParam).replace(/^(ref_|r_|tg_)/, '').trim();
     
     if (cleanCode && cleanCode !== 'null' && cleanCode !== 'undefined' && cleanCode !== '') {
       localStorage.setItem(LOCAL_STORAGE_KEY, cleanCode);
