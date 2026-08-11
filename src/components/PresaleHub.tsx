@@ -254,16 +254,6 @@ export const PresaleHub = () => {
                           <h2 className="font-black text-slate-900">Ston.fi DEX</h2>
                       </div>
                       <div className="flex items-center gap-2">
-                          <select 
-                              value={dexLang} 
-                              onChange={(e) => setDexLang(e.target.value as any)}
-                              className="bg-slate-100 text-xs font-bold text-slate-700 rounded-lg px-2 py-1 outline-none appearance-none cursor-pointer"
-                          >
-                              <option value="en">English</option>
-                              <option value="ar">العربية</option>
-                              <option value="ru">Русский</option>
-                              <option value="fa">فارسی</option>
-                          </select>
                           <button onClick={() => setIsDexModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-600">
                               <X className="w-4 h-4" />
                           </button>
@@ -271,6 +261,22 @@ export const PresaleHub = () => {
                   </div>
                   
                   <div className={`p-6 overflow-y-auto flex-1 ${dexLang === 'ar' || dexLang === 'fa' ? 'text-right' : 'text-left'}`} dir={dexLang === 'ar' || dexLang === 'fa' ? 'rtl' : 'ltr'}>
+                      <div className="flex gap-2 mb-6 bg-slate-100 p-1.5 rounded-xl overflow-x-auto" dir="ltr">
+                          {[
+                              { code: 'en', label: 'English' },
+                              { code: 'ar', label: 'العربية' },
+                              { code: 'ru', label: 'Русский' },
+                              { code: 'fa', label: 'فارسی' }
+                          ].map((lang) => (
+                              <button 
+                                  key={lang.code}
+                                  onClick={() => setDexLang(lang.code as any)}
+                                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${dexLang === lang.code ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                              >
+                                  {lang.label}
+                              </button>
+                          ))}
+                      </div>
                       <h3 className="text-xl font-black text-slate-900 mb-4">{DEX_TEXT[dexLang].title}</h3>
                       <p className="text-slate-600 leading-relaxed font-medium">
                           {DEX_TEXT[dexLang].text}
