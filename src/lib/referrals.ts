@@ -9,7 +9,8 @@ import {
   query,
   where,
   getDocs,
-  orderBy
+  orderBy,
+  increment
 } from 'firebase/firestore';
 import { grantReward } from './rewardsEngine';
 
@@ -113,30 +114,30 @@ export const processReferral = async (
       const referredUpdate = {
         referredBy: referrerDocId,
         hasProcessedReferral: true,
-        'realBalances.GRMF': (referredData?.realBalances?.GRMF || 0) + WELCOME_BONUS,
-        'betaBalances.GRMF': (referredData?.betaBalances?.GRMF || 0) + WELCOME_BONUS,
+        'realBalances.GRMF': increment(WELCOME_BONUS),
+        'betaBalances.GRMF': increment(WELCOME_BONUS),
         ...(!referredDoc.exists() && { createdAt: serverTimestamp(), telegramId: tgId, username: newUsername })
       };
       
       if (referredDoc.exists()) {
         transaction.update(referredRef, referredUpdate);
       } else {
-        transaction.set(referredRef, referredUpdate);
+        transaction.set(referredRef, referredUpdate, { merge: true });
       }
       
       // 2. Update Referrer User
       const referrerUpdate = {
-        'realBalances.GRMF': (referrerData?.realBalances?.GRMF || 0) + REFERRER_REWARD,
-        'betaBalances.GRMF': (referrerData?.betaBalances?.GRMF || 0) + REFERRER_REWARD,
-        referralsCount: (referrerData?.referralsCount || 0) + 1,
-        earnedReferralCoins: (referrerData?.earnedReferralCoins || 0) + REFERRER_REWARD,
+        'realBalances.GRMF': increment(REFERRER_REWARD),
+        'betaBalances.GRMF': increment(REFERRER_REWARD),
+        referralsCount: increment(1),
+        earnedReferralCoins: increment(REFERRER_REWARD),
         ...(!referrerDoc.exists() && { createdAt: serverTimestamp() })
       };
       
       if (referrerDoc.exists()) {
         transaction.update(referrerRef, referrerUpdate);
       } else {
-        transaction.set(referrerRef, referrerUpdate);
+        transaction.set(referrerRef, referrerUpdate, { merge: true });
       }
       
       // 3. Create a public record in "referrals" collection
