@@ -9,7 +9,7 @@ export const TOKENS: Token[] = [
     priceUsd: 0.004,
     change24h: 12.45,
     iconBg: 'bg-gradient-to-br from-indigo-500 to-purple-600',
-    iconUrl: 'https://i.suar.me/JpxXB/l',
+    iconUrl: 'https://i.suar.me/vAdG5/l',
     contractAddress: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c',
     isVerified: true,
     isPopular: true,

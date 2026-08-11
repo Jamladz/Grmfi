@@ -104,7 +104,7 @@ export const DailyBoxModal: React.FC<DailyBoxModalProps> = ({
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-full bg-white p-1 shadow-md border-2 border-amber-300 shrink-0 overflow-hidden flex items-center justify-center ring-2 ring-amber-400/20">
                   <img
-                    src="https://i.suar.me/JpxXB/l"
+                    src="https://i.suar.me/vAdG5/l"
                     alt="GRMF Token Logo"
                     className="w-full h-full object-cover rounded-full"
                   />

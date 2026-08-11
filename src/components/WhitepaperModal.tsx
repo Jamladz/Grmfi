@@ -37,6 +37,7 @@ interface Translations {
     ecosystem: string;
     team: string;
     marketing: string;
+    presale: string;
     deflationTitle: string;
     deflationBody: string;
   };
@@ -89,11 +90,12 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     tokenomics: {
       supplyTitle: "Total Supply Allocation",
-      totalSupply: "1,000,000,000 GRMF",
+      totalSupply: "100,000,000 GRMF",
       community: "Mining & Airdrop Rewards",
       ecosystem: "Liquidity & Governance",
       team: "Dev & Operations (Vested)",
       marketing: "Strategic Partnerships",
+      presale: "Presale Allocation",
       deflationTitle: "🔥 Economic Stability",
       deflationBody: "GRMF utilizes advanced liquidity management and selective burn protocols to maintain its ecosystem growth and utility."
     },
@@ -144,11 +146,12 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     tokenomics: {
       supplyTitle: "توزيع إجمالي العرض",
-      totalSupply: "1,000,000,000 GRMF",
+      totalSupply: "100,000,000 GRMF",
       community: "مكافآت التعدين والإنزال الجوي",
       ecosystem: "السيولة والحوكمة",
       team: "الفريق والعمليات (فترة استحقاق)",
       marketing: "الشراكات الاستراتيجية",
+      presale: "تخصيص البيع المسبق",
       deflationTitle: "🔥 الاستقرار الاقتصادي",
       deflationBody: "تستخدم GRMF إدارة سيولة متقدمة وبروتوكولات حرق انتقائية لضمان نمو المنظومة وفائدتها."
     },
@@ -199,11 +202,12 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     tokenomics: {
       supplyTitle: "Распределение общего объема",
-      totalSupply: "1 000 000 000 GRMF",
+      totalSupply: "100 000 000 GRMF",
       community: "Награды за майнинг и аирдропы",
       ecosystem: "Ликвидность и управление",
       team: "Разработка и операции (Вестинг)",
       marketing: "Стратегические партнерства",
+      presale: "Распределение предпродажи",
       deflationTitle: "🔥 Экономическая стабильность",
       deflationBody: "GRMF использует передовое управление ликвидностью и протоколы сжигания для поддержания роста и полезности экосистемы."
     },
@@ -254,11 +258,12 @@ const TRANSLATIONS: Record<Language, Translations> = {
     },
     tokenomics: {
       supplyTitle: "توزیع کل عرضه",
-      totalSupply: "۱,۰۰۰,۰۰۰,۰۰۰ GRMF",
+      totalSupply: "۱۰۰,۰۰۰,۰۰۰ GRMF",
       community: "پاداش‌های جامعه و استخراج",
       ecosystem: "اکوسیستم و نقدینگی",
       team: "توسعه و تیم (دوره واگذاری)",
       marketing: "بازاریابی و همکاران",
+      presale: "تخصیص پیش‌فروش",
       deflationTitle: "🔥 پایداری اقتصادی",
       deflationBody: "GRMF از مدیریت نقدینگی پیشرفته و پروتکل‌های توکن‌سوزی انتخابی برای حفظ رشد و کارایی اکوسیستم استفاده می‌کند."
     },
@@ -478,10 +483,10 @@ export const WhitepaperModal: React.FC<WhitepaperModalProps> = ({ isOpen, onClos
                     <div>
                       <div className="flex justify-between font-bold text-[11px] mb-1">
                         <span>{t.tokenomics.community}</span>
-                        <span className="text-emerald-600 font-black">50%</span>
+                        <span className="text-emerald-600 font-black">45%</span>
                       </div>
                       <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-500 rounded-full w-[50%]" />
+                        <div className="h-full bg-emerald-500 rounded-full w-[45%]" />
                       </div>
                     </div>
 
@@ -512,6 +517,16 @@ export const WhitepaperModal: React.FC<WhitepaperModalProps> = ({ isOpen, onClos
                       </div>
                       <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                         <div className="h-full bg-rose-500 rounded-full w-[10%]" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between font-bold text-[11px] mb-1">
+                        <span>{t.tokenomics.presale}</span>
+                        <span className="text-sky-600 font-black">5%</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-sky-500 rounded-full w-[5%]" />
                       </div>
                     </div>
                   </div>

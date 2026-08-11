@@ -19,7 +19,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-3 cursor-pointer group">
             <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-400 via-blue-500 to-blue-600 p-[1.5px] shadow-lg shadow-blue-500/10 group-hover:scale-105 transition-all duration-300">
               <div className="w-full h-full bg-white rounded-[14px] flex items-center justify-center overflow-hidden border border-slate-100">
-                <img src="https://i.suar.me/JpxXB/l" alt="GRMF Logo" className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500" />
+                <img src="https://i.suar.me/vAdG5/l" alt="GRMF Logo" className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500" />
               </div>
               <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white border border-slate-100 flex items-center justify-center">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />

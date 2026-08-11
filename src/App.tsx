@@ -50,12 +50,13 @@ import { ReferralsView } from './components/ReferralsView';
 import { TasksView } from './components/TasksView';
 import { TokenSelectModal } from './components/TokenSelectModal';
 import { AdminView } from './components/AdminView';
-import { Users, ShieldAlert, Gift } from 'lucide-react';
+import { PresaleHub } from './components/PresaleHub';
+import { Users, ShieldAlert, Gift, Rocket } from 'lucide-react';
 
 import { TOKENS, POOLS } from './data/tokens';
 import { Token, TransactionState, WalletState } from './types';
 
-type ActiveView = 'swap' | 'tasks' | 'referrals' | 'airdrop' | 'profile' | 'admin';
+type ActiveView = 'swap' | 'tasks' | 'referrals' | 'airdrop' | 'profile' | 'admin' | 'presale';
 
 function safeCloneDeep(obj: any): any {
   if (obj === null || typeof obj !== 'object') return obj;
@@ -870,6 +871,11 @@ function App() {
               <AdminView key="admin" />
             </div>
           )}
+          {activeView === 'presale' && (
+            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+              <PresaleHub key="presale" />
+            </div>
+          )}
         </AnimatePresence>
       </main>
 
@@ -899,6 +905,12 @@ function App() {
             onClick={() => setActiveView('airdrop')} 
             icon={<Trophy className="w-5 h-5" />} 
             label="Airdrop" 
+          />
+          <NavButton 
+            active={activeView === 'presale'} 
+            onClick={() => setActiveView('presale')} 
+            icon={<Rocket className="w-5 h-5" />} 
+            label="Presale" 
           />
           <NavButton 
             active={activeView === 'profile'} 
