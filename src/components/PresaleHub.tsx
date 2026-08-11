@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
-import { Gem, Clock, Send, Zap, Minus, Plus } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Gem, Clock, Send, Zap, Minus, Plus, X, LineChart } from 'lucide-react';
 import { TonConnectButton, useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
 import { toNano } from '@ton/core';
 import { doc, getDoc, setDoc, increment, addDoc, collection, serverTimestamp, onSnapshot, query, where, orderBy } from 'firebase/firestore';
@@ -15,6 +15,15 @@ export const PresaleHub = () => {
   const [amountToBuy, setAmountToBuy] = useState<number>(500);
   const [withdrawAmount, setWithdrawAmount] = useState<number>(0);
   const [withdrawAddress, setWithdrawAddress] = useState<string>('');
+  const [isDexModalOpen, setIsDexModalOpen] = useState(false);
+  const [dexLang, setDexLang] = useState<'en' | 'ar' | 'ru' | 'fa'>('en');
+
+  const DEX_TEXT = {
+    en: { title: "Exclusive Early Trading", text: "Users who participate in the GRMF presale will gain exclusive early access to trade GRMF on the Ston.fi decentralized exchange (DEX). This allows you to trade freely before the official airdrop distribution and centralized exchange (CEX) listings, giving you a strategic advantage." },
+    ar: { title: "تداول مبكر حصري", text: "سيحصل المستخدمون الذين يشاركون في البيع المسبق لعملة GRMF على وصول مبكر وحصري لتداول العملة على منصة Ston.fi اللامركزية (DEX). يتيح لك ذلك التداول بحرية قبل التوزيع الرسمي للايردروب والإدراج في المنصات المركزية (CEX)، مما يمنحك ميزة استراتيجية." },
+    ru: { title: "Эксклюзивная ранняя торговля", text: "Пользователи, участвующие в пресейле GRMF, получат эксклюзивный ранний доступ к торговле на децентрализованной бирже Ston.fi (DEX). Это позволит вам свободно торговать до официального распределения аирдропа и листинга на централизованных биржах (CEX), давая вам стратегическое преимущество." },
+    fa: { title: "معاملات زودهنگام انحصاری", text: "کاربرانی که در پیش‌فروش GRMF شرکت می‌کنند، دسترسی زودهنگام و انحصاری برای معامله در صرافی غیرمتمرکز Ston.fi (DEX) خواهند داشت. این به شما امکان می‌دهد قبل از توزیع رسمی ایردراپ و لیست شدن در صرافی‌های متمرکز (CEX) آزادانه معامله کنید و به شما یک مزیت استراتژیک می‌دهد." }
+  };
 
   useEffect(() => {
     let unsubscribeBalance: () => void;
@@ -136,13 +145,21 @@ export const PresaleHub = () => {
   const progressPercent = (MOCK_SOLD / TOTAL_POOL) * 100;
 
   return (
-    <motion.div className="flex-1 flex flex-col p-2 gap-2 h-full overflow-y-auto pb-24">
+    <>
+      <motion.div className="flex-1 flex flex-col p-2 gap-2 h-full overflow-y-auto pb-24">
         {/* Header/Logo */}
         <div className="bg-white rounded-2xl p-3 flex justify-between items-center shadow-sm shrink-0">
             <div className='flex items-center gap-2'>
                 <img src="https://i.suar.me/vAdG5/l" alt="GRMF Logo" className="w-8 h-8 rounded-full" />
                 <span className="font-black text-slate-900">GRMF Presale</span>
             </div>
+            <button 
+                onClick={() => setIsDexModalOpen(true)}
+                className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1 shadow-sm active:scale-95 transition-transform"
+            >
+                <LineChart className="w-4 h-4" />
+                DEX
+            </button>
         </div>
 
         {/* Timer */}
@@ -210,5 +227,64 @@ export const PresaleHub = () => {
         </div>
         <TonConnectButton className="!scale-75 origin-center" />
     </motion.div>
+
+    {/* DEX Modal */}
+    <AnimatePresence>
+      {isDexModalOpen && (
+          <>
+              <motion.div 
+                  initial={{ opacity: 0 }} 
+                  animate={{ opacity: 1 }} 
+                  exit={{ opacity: 0 }} 
+                  className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+                  onClick={() => setIsDexModalOpen(false)}
+              />
+              <motion.div
+                  initial={{ y: "100%" }}
+                  animate={{ y: 0 }}
+                  exit={{ y: "100%" }}
+                  transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                  className="fixed inset-x-0 bottom-0 z-50 bg-white rounded-t-3xl shadow-2xl h-[75vh] flex flex-col overflow-hidden"
+              >
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+                      <div className="flex items-center gap-2">
+                          <div className="p-2 bg-indigo-100 rounded-xl text-indigo-600">
+                              <LineChart className="w-5 h-5" />
+                          </div>
+                          <h2 className="font-black text-slate-900">Ston.fi DEX</h2>
+                      </div>
+                      <div className="flex items-center gap-2">
+                          <select 
+                              value={dexLang} 
+                              onChange={(e) => setDexLang(e.target.value as any)}
+                              className="bg-slate-100 text-xs font-bold text-slate-700 rounded-lg px-2 py-1 outline-none appearance-none cursor-pointer"
+                          >
+                              <option value="en">English</option>
+                              <option value="ar">العربية</option>
+                              <option value="ru">Русский</option>
+                              <option value="fa">فارسی</option>
+                          </select>
+                          <button onClick={() => setIsDexModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-600">
+                              <X className="w-4 h-4" />
+                          </button>
+                      </div>
+                  </div>
+                  
+                  <div className={`p-6 overflow-y-auto flex-1 ${dexLang === 'ar' || dexLang === 'fa' ? 'text-right' : 'text-left'}`} dir={dexLang === 'ar' || dexLang === 'fa' ? 'rtl' : 'ltr'}>
+                      <h3 className="text-xl font-black text-slate-900 mb-4">{DEX_TEXT[dexLang].title}</h3>
+                      <p className="text-slate-600 leading-relaxed font-medium">
+                          {DEX_TEXT[dexLang].text}
+                      </p>
+
+                      <div className="mt-8 bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex flex-col items-center justify-center gap-3">
+                          <img src="https://i.suar.me/rgZxz/l" alt="Ston.fi" className="w-12 h-12 rounded-full shadow-sm" />
+                          <span className="font-black text-indigo-900 text-center text-sm">Trade freely on Ston.fi before CEX listing</span>
+                      </div>
+                  </div>
+              </motion.div>
+          </>
+      )}
+    </AnimatePresence>
+  </>
   );
 };
