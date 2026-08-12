@@ -911,6 +911,7 @@ function App() {
             onClick={() => setActiveView('presale')} 
             icon={<Rocket className="w-5 h-5" />} 
             label="Presale" 
+            badge="Sale"
           />
           <NavButton 
             active={activeView === 'profile'} 

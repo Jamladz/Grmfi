@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Gem, Clock, Send, Zap, Minus, Plus, X, LineChart } from 'lucide-react';
+import { Gem, Clock, Send, Zap, Minus, Plus, X, LineChart, Users, Copy, CheckCircle2 } from 'lucide-react';
 import { TonConnectButton, useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
 import { toNano } from '@ton/core';
 import { doc, getDoc, setDoc, increment, addDoc, collection, serverTimestamp, onSnapshot, query, where, orderBy } from 'firebase/firestore';
@@ -17,6 +17,9 @@ export const PresaleHub = () => {
   const [withdrawAddress, setWithdrawAddress] = useState<string>('');
   const [isDexModalOpen, setIsDexModalOpen] = useState(false);
   const [dexLang, setDexLang] = useState<'en' | 'ar' | 'ru' | 'fa'>('en');
+  const [copied, setCopied] = useState(false);
+  const [soldTokens, setSoldTokens] = useState<number>(0);
+  const TOTAL_POOL = 5000000;
 
   const DEX_TEXT = {
     en: { title: "Exclusive Early Trading", text: "Users who participate in the GRMF presale will gain exclusive early access to trade GRMF on the Ston.fi decentralized exchange (DEX). This allows you to trade freely before the official airdrop distribution and centralized exchange (CEX) listings, giving you a strategic advantage." },
@@ -61,11 +64,20 @@ export const PresaleHub = () => {
     });
 
     const targetDate = new Date('2026-08-21T00:00:00Z').getTime();
+    const startDate = new Date('2026-08-01T00:00:00Z').getTime();
     
+    // Initial dynamic pool calculation
+    const initialNow = new Date().getTime();
+    if (initialNow > startDate) {
+      const progress = Math.min((initialNow - startDate) / (targetDate - startDate), 1);
+      setSoldTokens(Math.floor(progress * TOTAL_POOL));
+    }
+
     const timer = setInterval(() => {
       const now = new Date().getTime();
       const difference = targetDate - now;
 
+      // Update Time
       if (difference <= 0) {
         clearInterval(timer);
         setTimeLeft({ days: 0, hours: 0, minutes: 0 });
@@ -74,6 +86,16 @@ export const PresaleHub = () => {
           days: Math.floor(difference / (1000 * 60 * 60 * 24)),
           hours: Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
           minutes: Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60)),
+        });
+      }
+      
+      // Simulate live buying every second
+      if (difference > 0 && now > startDate) {
+        setSoldTokens(prev => {
+            if (prev >= TOTAL_POOL) return TOTAL_POOL;
+            // Add a small random burst to simulate live global buys
+            const burst = Math.random() > 0.6 ? Math.floor(Math.random() * 450) + 50 : 0;
+            return Math.min(prev + burst, TOTAL_POOL);
         });
       }
     }, 1000);
@@ -139,10 +161,15 @@ export const PresaleHub = () => {
       }
   };
 
-  // Mock progress for the UI
-  const TOTAL_POOL = 5000000;
-  const MOCK_SOLD = 2154320;
-  const progressPercent = (MOCK_SOLD / TOTAL_POOL) * 100;
+  const handleCopyLink = () => {
+      const userId = auth.currentUser?.uid || 'guest_123';
+      const link = `https://t.me/Grmfdex_bot?startapp=ref_${userId}`;
+      navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+  };
+
+  const progressPercent = (soldTokens / TOTAL_POOL) * 100;
 
   return (
     <>
@@ -185,7 +212,7 @@ export const PresaleHub = () => {
                 <div className="bg-sky-500 h-3 rounded-full" style={{ width: `${progressPercent}%` }}></div>
             </div>
             <div className="flex justify-between items-center text-[10px] font-medium text-slate-500">
-                <span>{MOCK_SOLD.toLocaleString()} GRMF Sold</span>
+                <span><motion.span>{soldTokens.toLocaleString()}</motion.span> GRMF Sold</span>
                 <span>{TOTAL_POOL.toLocaleString()} Total</span>
             </div>
         </div>
@@ -225,6 +252,43 @@ export const PresaleHub = () => {
                 ))}
             </div>
         </div>
+
+        {/* Invite Friends */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm flex flex-col gap-3 shrink-0">
+            <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-100 rounded-xl text-indigo-600">
+                    <Users className="w-5 h-5" />
+                </div>
+                <div>
+                    <h3 className="text-sm font-black text-slate-900">Invite Friends</h3>
+                    <p className="text-[10px] font-medium text-slate-500">Earn 10% of their presale purchases</p>
+                </div>
+            </div>
+            <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+                <span className="flex-1 text-xs font-medium text-slate-600 px-2 truncate">
+                    https://t.me/Grmfdex_bot?startapp=ref_{auth.currentUser?.uid || 'guest_123'}
+                </span>
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={handleCopyLink}
+                        className={`p-2 rounded-lg flex items-center justify-center transition-colors ${copied ? 'bg-emerald-500 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                    >
+                        {copied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                    <button
+                        onClick={() => {
+                            const url = `https://t.me/Grmfdex_bot?startapp=ref_${auth.currentUser?.uid || 'guest_123'}`;
+                            const text = encodeURIComponent("Join the GRMF Presale and get exclusive early DEX trading access!");
+                            window.open(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${text}`, '_blank');
+                        }}
+                        className="p-2 rounded-lg flex items-center justify-center bg-[#2AABEE] text-white hover:bg-[#229ED9] transition-colors shadow-sm"
+                    >
+                        <Send className="w-4 h-4" />
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <TonConnectButton className="!scale-75 origin-center" />
     </motion.div>
 

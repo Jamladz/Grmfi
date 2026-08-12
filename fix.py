@@ -1,60 +1,9 @@
-import { db } from './firebase';
-import { 
-  collection, 
-  doc, 
-  getDoc,
-  setDoc,
-  runTransaction,
-  serverTimestamp,
-  query,
-  where,
-  getDocs,
-  orderBy,
-  increment
-} from 'firebase/firestore';
-import { grantReward } from './rewardsEngine';
+import re
 
-const LOCAL_STORAGE_KEY = 'grmf_pending_referrer';
+with open('src/lib/referrals.ts', 'r') as f:
+    content = f.read()
 
-export const extractAndStoreReferralCode = (): string | null => {
-  try {
-    const tg = (window as any).Telegram?.WebApp;
-    let rawParam: string | null = null;
-    
-    if (tg?.initDataUnsafe?.start_param) {
-      rawParam = String(tg.initDataUnsafe.start_param);
-    }
-    
-    if (!rawParam && tg?.initData) {
-      const parsed = new URLSearchParams(tg.initData);
-      rawParam = parsed.get('start_param') || parsed.get('startapp');
-    }
-    
-    if (!rawParam) {
-      const urlParams = new URLSearchParams(window.location.search);
-      rawParam = urlParams.get('startapp') || urlParams.get('start') || urlParams.get('ref');
-    }
-    
-    if (!rawParam) {
-      rawParam = localStorage.getItem(LOCAL_STORAGE_KEY);
-    }
-    
-    if (!rawParam) return null;
-    
-    // Clean prefix 'ref_'
-    const cleanCode = String(rawParam).replace(/^(ref_|r_|tg_)/, '').trim();
-    
-    if (cleanCode && cleanCode !== 'null' && cleanCode !== 'undefined' && cleanCode !== '') {
-      localStorage.setItem(LOCAL_STORAGE_KEY, cleanCode);
-      return cleanCode;
-    }
-  } catch (e) {
-    console.error("Error extracting referral code:", e);
-  }
-  return null;
-};
-
-export const processReferral = async (
+new_process = """export const processReferral = async (
   currentUid: string,
   currentUserData: any,
   tgUser?: any
@@ -163,68 +112,10 @@ export const processReferral = async (
     console.error("Transaction failed:", err);
     return { success: false };
   }
-};
+};"""
 
-export interface Milestone {
-  id: string;
-  targetCount: number;
-  rewardCoins: number;
-  
-}
+# Replace the old processReferral with new one using regex
+new_content = re.sub(r'export const processReferral = async \(.*?\n\};\n', new_process + '\n', content, flags=re.DOTALL)
 
-export const REFERRAL_MILESTONES: Milestone[] = [
-  { id: 'ref_3', targetCount: 3, rewardCoins: 500 },
-  { id: 'ref_5', targetCount: 5, rewardCoins: 1000 },
-  { id: 'ref_10', targetCount: 10, rewardCoins: 2500 },
-  { id: 'ref_25', targetCount: 25, rewardCoins: 7000 },
-];
-
-export const claimMilestone = async (userId: string, milestone: Milestone): Promise<boolean> => {
-  try {
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
-    if (!userSnap.exists()) return false;
-    
-    const data = userSnap.data();
-    const count = data.referralsCount || 0;
-    const claimed = data.claimedMilestones || [];
-    
-    if (count < milestone.targetCount) {
-      console.warn("Milestone claim failed: not enough referrals", { count, target: milestone.targetCount });
-      return false;
-    }
-    if (claimed.includes(milestone.id)) {
-      console.warn("Milestone claim failed: already claimed", { milestoneId: milestone.id });
-      return false;
-    }
-    
-    const res = await grantReward({
-      userId,
-      source: `milestone_${milestone.id}`,
-      amount: milestone.rewardCoins,
-      balanceType: 'both',
-      extraUserUpdates: {
-        claimedMilestones: [...claimed, milestone.id]
-      }
-    });
-
-    return res.success;
-  } catch (err) {
-    console.error("Claim milestone failed:", err);
-    return false;
-  }
-};
-
-export const getReferredFriends = async (userId: string) => {
-  const q = query(
-    collection(db, 'referrals'),
-    where('referrerId', '==', userId),
-    orderBy('createdAt', 'desc')
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-};
-
-export const syncReferralsForUser = async (userUid: string, userProfile: any) => {
-  // Now using runTransaction in processReferral, so this can be a no-op or implemented later
-};
+with open('src/lib/referrals.ts', 'w') as f:
+    f.write(new_content)

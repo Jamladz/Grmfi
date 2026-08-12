@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Users, Copy, Share2, Gift, X, Loader2, Check, ChevronRight, Award, Coins
+  Users, Copy, Share2, Gift, X, Loader2, Check, ChevronRight, Award, Coins, Trophy
 } from 'lucide-react';
 import { REFERRAL_MILESTONES, claimMilestone, getReferredFriends } from '../lib/referrals';
-import { auth } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
+import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 
 export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => {
   const [copied, setCopied] = useState(false);
@@ -12,12 +13,15 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [successModal, setSuccessModal] = useState<{ amount: number } | null>(null);
+  
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
 
   const inviteCount = userProfile?.referralsCount || 0;
   const claimedMilestones: string[] = userProfile?.claimedMilestones || [];
   
-  const tgId = userProfile?.telegramId || userProfile?.id || '12345';
-  const referralLink = `https://t.me/Grmfdex_bot?startapp=ref_${tgId}`;
+  const userId = userProfile?.id || '12345';
+  const referralLink = `https://t.me/Grmfdex_bot?startapp=ref_${userId}`;
 
   useEffect(() => {
     if (userProfile?.id) {
@@ -26,6 +30,51 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
         .then(res => setFriends(res))
         .catch(console.error)
         .finally(() => setLoadingFriends(false));
+        
+      setLoadingLeaderboard(true);
+      const fetchLeaderboard = async () => {
+        try {
+          const q = query(collection(db, 'users'), orderBy('referralsCount', 'desc'), limit(20));
+          const snap = await getDocs(q);
+          const realUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+          
+          const MOCK_LEADERBOARD = [
+            { id: 'mock1', username: 'Ahmad_99', referralsCount: 247 },
+            { id: 'mock2', username: 'Ivan_77', referralsCount: 185 },
+            { id: 'mock3', username: 'Alex_dev', referralsCount: 142 },
+            { id: 'mock4', username: 'Misha_crypto', referralsCount: 110 },
+            { id: 'mock5', username: 'Omar_DZ', referralsCount: 95 },
+            { id: 'mock6', username: 'Sarah_ton', referralsCount: 82 },
+            { id: 'mock7', username: 'Dmitry_ton', referralsCount: 70 },
+            { id: 'mock8', username: 'Youssef_x', referralsCount: 58 },
+            { id: 'mock9', username: 'Crypto_mike', referralsCount: 47 },
+            { id: 'mock10', username: 'Elena_99', referralsCount: 39 },
+            { id: 'mock11', username: 'Khalid_crypto', referralsCount: 32 },
+            { id: 'mock12', username: 'Emily_x', referralsCount: 27 },
+            { id: 'mock13', username: 'Igor_x', referralsCount: 22 },
+            { id: 'mock14', username: 'Ali_ton', referralsCount: 18 },
+            { id: 'mock15', username: 'Sara_95', referralsCount: 15 },
+            { id: 'mock16', username: 'John_doe', referralsCount: 12 },
+            { id: 'mock17', username: 'Mona_z', referralsCount: 10 },
+            { id: 'mock18', username: 'Leo_ton', referralsCount: 8 },
+            { id: 'mock19', username: 'Nadia_crypto', referralsCount: 7 },
+            { id: 'mock20', username: 'Tarek_99', referralsCount: 6 },
+          ];
+
+          const combined = [...realUsers, ...MOCK_LEADERBOARD];
+          
+          // Remove duplicates if any (by id) and sort
+          const uniqueCombined = Array.from(new Map(combined.map(item => [item.id, item])).values());
+          uniqueCombined.sort((a, b) => (b.referralsCount || 0) - (a.referralsCount || 0));
+          
+          setLeaderboard(uniqueCombined.slice(0, 20));
+        } catch (error) {
+          console.error("Error fetching leaderboard:", error);
+        } finally {
+          setLoadingLeaderboard(false);
+        }
+      };
+      fetchLeaderboard();
     }
   }, [userProfile?.id]);
 
@@ -188,6 +237,69 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Leaderboard */}
+      <div className="mx-2 mt-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+            <Trophy className="w-4 h-4 text-yellow-500" /> Weekly Leaderboard
+          </h3>
+          <div className="flex items-center gap-1.5 bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">
+            <span className="text-[10px] font-black text-blue-600 uppercase tracking-wider">Prize Pool</span>
+            <div className="flex items-center gap-0.5">
+              <span className="text-xs font-black text-slate-800">300</span>
+              <img src="https://i.suar.me/zXrj0/l" alt="GRAM" className="w-3.5 h-3.5 rounded-full" />
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-[16px] shadow-sm border border-slate-100 overflow-hidden">
+          {loadingLeaderboard ? (
+            <div className="p-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+          ) : leaderboard.length === 0 ? (
+            <div className="p-6 text-center">
+              <p className="text-xs font-bold text-slate-500">No data yet</p>
+            </div>
+          ) : (
+            <div className="flex flex-col max-h-[220px] overflow-y-auto no-scrollbar">
+              {leaderboard.map((user, index) => {
+                const isCurrentUser = user.id === userProfile?.id;
+                let reward = 0;
+                if (index === 0) reward = 100;
+                else if (index === 1) reward = 50;
+                else if (index === 2) reward = 30;
+                else if (index >= 3 && index <= 9) reward = 10;
+                else if (index >= 10 && index <= 19) reward = 5;
+
+                return (
+                  <div key={user.id} className={`p-3 border-b border-slate-50 flex items-center justify-between last:border-0 ${isCurrentUser ? 'bg-indigo-50/50' : ''}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${index === 0 ? 'bg-yellow-100 text-yellow-600' : index === 1 ? 'bg-slate-200 text-slate-600' : index === 2 ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500'}`}>
+                        {index + 1}
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                          {user.username || user.telegramUsername || 'Anonymous'}
+                          {isCurrentUser && <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[8px] uppercase tracking-wider">You</span>}
+                        </span>
+                        <span className="text-[10px] font-medium text-slate-500">{user.referralsCount || 0} invites</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end justify-center">
+                      {reward > 0 && (
+                        <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100 shadow-sm">
+                          <span className="text-[11px] font-black text-slate-700">+{reward}</span>
+                          <img src="https://i.suar.me/zXrj0/l" alt="GRAM" className="w-3.5 h-3.5 rounded-full" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
