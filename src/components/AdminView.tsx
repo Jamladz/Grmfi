@@ -24,7 +24,7 @@ export const AdminView: React.FC = () => {
       let orderField = 'lastActiveTimestamp';
       if (currentSort === 'referrals') orderField = 'referralsCount';
       if (currentSort === 'grmf') orderField = 'realBalances.GRMF';
-      const qUsers = query(collection(db, 'users'), orderBy(orderField, 'desc'), limit(100));
+      const qUsers = query(collection(db, 'users'), orderBy(orderField, 'desc'), limit(10000));
       const snapUsers = await getDocs(qUsers);
       const usersData = snapUsers.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       setUsers(usersData);
@@ -71,11 +71,13 @@ export const AdminView: React.FC = () => {
   };
 
   const filteredUsers = users.filter(u => 
-    u.id.includes(search) || 
-    u.username?.toLowerCase().includes(search.toLowerCase()) || 
-    u.telegramUsername?.toLowerCase().includes(search.toLowerCase()) ||
-    u.firstName?.toLowerCase().includes(search.toLowerCase()) ||
-    u.telegramId?.toString().includes(search)
+    u.telegramId && (
+      u.id.includes(search) || 
+      u.username?.toLowerCase().includes(search.toLowerCase()) || 
+      u.telegramUsername?.toLowerCase().includes(search.toLowerCase()) ||
+      u.firstName?.toLowerCase().includes(search.toLowerCase()) ||
+      u.telegramId?.toString().includes(search)
+    )
   );
 
   const formatLastActive = (timestamp: number) => {
@@ -219,7 +221,7 @@ export const AdminView: React.FC = () => {
                     <div className="flex flex-col">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-black text-slate-900">
-                          {user.firstName || ''} {user.lastName || ''}
+                          {user.firstName || user.lastName ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : user.username || 'Telegram User'}
                         </span>
                         {user.isPremium && (
                           <span className="w-3 h-3 bg-amber-400 rounded-full flex items-center justify-center text-[6px] text-white">⭐</span>
