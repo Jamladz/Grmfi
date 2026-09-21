@@ -793,7 +793,7 @@ function App() {
   }
 
   return (
-    <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden relative">
+    <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden relative pt-[env(safe-area-inset-top,8px)]">
       {/* Dynamic Background Accents */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[70%] h-[50%] bg-blue-100/40 rounded-full blur-[120px] animate-pulse" />
