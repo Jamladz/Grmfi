@@ -115,6 +115,10 @@ function App() {
       try {
         tg.ready();
         tg.expand();
+        // Request official full-screen mode if available (Bot API 8.0+)
+        if (typeof tg.requestFullscreen === 'function') {
+          tg.requestFullscreen();
+        }
         // Set header color to match app theme
         tg.setHeaderColor?.('#ffffff');
         // Enable closing confirmation to prevent accidental swipes
@@ -394,13 +398,20 @@ function App() {
     const data = userProfile;
     const now = Date.now();
 
-    // 1. Daily Login Bonus (Once per day)
+    // 1. Daily Login Bonus (Once per day - Resets at UTC Midnight)
     const lastLoginBonusAt = data.lastLoginBonusTimestamp || 0;
-    const todayStr = new Date(now).toDateString();
-    const isNewDay = todayStr !== new Date(lastLoginBonusAt).toDateString();
+    const nowObj = new Date(now);
+    const todayUTC = Date.UTC(nowObj.getUTCFullYear(), nowObj.getUTCMonth(), nowObj.getUTCDate());
+    const lastBonusUTC = lastLoginBonusAt ? (() => {
+      const d = new Date(lastLoginBonusAt);
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    })() : 0;
+    
+    const isNewDayUTC = todayUTC > lastBonusUTC;
+    const todayStr = new Date(todayUTC).toISOString().split('T')[0];
     const bonusKey = `daily_claim_${userDocId}_${todayStr}`;
 
-    if (isNewDay && data.hasCollectedWelcomeBonus && !processedDailyBonusRef.current.has(bonusKey)) {
+    if (isNewDayUTC && data.hasCollectedWelcomeBonus && !processedDailyBonusRef.current.has(bonusKey)) {
       processedDailyBonusRef.current.add(bonusKey);
       grantReward({
         userId: userDocId,

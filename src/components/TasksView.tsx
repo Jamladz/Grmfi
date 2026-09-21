@@ -34,10 +34,22 @@ export const TasksView: React.FC<TasksViewProps> = ({ userProfile, setActiveView
 
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
   
-  const getDailyStatus = (completedAt) => {
+  const getDailyStatus = (completedAt: number | null) => {
     if (!completedAt) return { completed: false, timeLeft: { hours: 0, minutes: 0, seconds: 0 } };
-    const diff = (completedAt + ONE_DAY_MS) - Date.now();
-    if (diff <= 0) return { completed: false, timeLeft: { hours: 0, minutes: 0, seconds: 0 } };
+    
+    const now = new Date();
+    // Calculate the start of the next UTC day (Midnight UTC)
+    const nextReset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
+    // Calculate the start of the current UTC day
+    const startOfTodayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0)).getTime();
+    
+    // If completion happened before today's start, it's ready to claim again
+    if (completedAt < startOfTodayUTC) {
+      return { completed: false, timeLeft: { hours: 0, minutes: 0, seconds: 0 } };
+    }
+    
+    // Otherwise, it was completed today, show countdown until next reset
+    const diff = nextReset.getTime() - now.getTime();
     
     return {
       completed: true,

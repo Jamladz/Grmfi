@@ -12,6 +12,7 @@ export const AdminView: React.FC = () => {
   const [sortBy, setSortBy] = useState<'recent' | 'referrals' | 'grmf'>('referrals');
   const [stats, setStats] = useState({
     totalUsers: 0,
+    realUsers: 0,
     active24h: 0,
     totalReferrals: 0,
     totalGrmf: 0
@@ -32,6 +33,9 @@ export const AdminView: React.FC = () => {
       // Fetch global stats using count queries for accuracy
       const totalUsersSnap = await getCountFromServer(collection(db, 'users'));
       
+      const realUsersQuery = query(collection(db, 'users'), where('telegramId', '>', 0));
+      const realUsersSnap = await getCountFromServer(realUsersQuery);
+      
       const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
       const active24hQuery = query(collection(db, 'users'), where('lastActiveTimestamp', '>', twentyFourHoursAgo));
       const active24hSnap = await getCountFromServer(active24hQuery);
@@ -42,6 +46,7 @@ export const AdminView: React.FC = () => {
 
       setStats({
         totalUsers: totalUsersSnap.data().count,
+        realUsers: realUsersSnap.data().count,
         active24h: active24hSnap.data().count,
         totalReferrals: localTotalRefs, // Note: This is from top 100
         totalGrmf: localTotalGrmf     // Note: This is from top 100
@@ -116,12 +121,18 @@ export const AdminView: React.FC = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard 
           icon={<Users className="w-4 h-4 text-blue-500" />} 
-          value={stats.totalUsers.toLocaleString()} 
-          label="Total Base" 
+          value={stats.realUsers.toLocaleString()} 
+          label="Real Users" 
           color="blue"
+        />
+        <StatCard 
+          icon={<TrendingUp className="w-4 h-4 text-slate-500" />} 
+          value={stats.totalUsers.toLocaleString()} 
+          label="Total Rows" 
+          color="slate"
         />
         <StatCard 
           icon={<Activity className="w-4 h-4 text-emerald-500" />} 
