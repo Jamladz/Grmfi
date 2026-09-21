@@ -793,10 +793,11 @@ function App() {
   }
 
   return (
-    <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden">
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-100/50 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-50/50 rounded-full blur-[120px]" />
+    <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden relative">
+      {/* Dynamic Background Accents */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[70%] h-[50%] bg-blue-100/40 rounded-full blur-[120px] animate-pulse" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[70%] h-[50%] bg-blue-50/40 rounded-full blur-[120px] animate-pulse" style={{ animationDelay: '1s' }} />
       </div>
 
       <Header 
@@ -804,17 +805,17 @@ function App() {
         onOpenSettings={() => {}} 
       />
 
-      <main className={`flex-1 w-full mx-auto px-3 sm:px-4 pt-2 pb-[calc(5rem+env(safe-area-inset-bottom,20px))] flex flex-col overflow-hidden relative ${
-        activeView === 'admin' && isAdmin ? 'max-w-5xl' : 'max-w-lg'
+      <main className={`flex-1 w-full mx-auto px-4 pt-2 pb-[calc(5.5rem+env(safe-area-inset-bottom,20px))] flex flex-col overflow-hidden relative z-10 ${
+        activeView === 'admin' && isAdmin ? 'max-w-6xl' : 'max-w-xl'
       }`}>
         <AnimatePresence mode="wait">
           {activeView === 'swap' && (
             <motion.div 
               key="swap"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="flex-1 flex flex-col items-center justify-center overflow-hidden"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="flex-1 flex flex-col items-center justify-center overflow-y-auto no-scrollbar py-4"
             >
               <SwapCard 
                 fromToken={fromToken} 
@@ -890,8 +891,8 @@ function App() {
         </AnimatePresence>
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200 px-2 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom,16px))] z-50 shadow-lg">
-        <div className="max-w-md mx-auto flex items-center justify-around gap-0.5">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200 px-1 sm:px-4 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom,12px))] z-50 shadow-lg ring-1 ring-slate-900/5">
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-0">
           <NavButton 
             active={activeView === 'swap'} 
             onClick={() => setActiveView('swap')} 

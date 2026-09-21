@@ -121,7 +121,7 @@ export const AdminView: React.FC = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
         <StatCard 
           icon={<Users className="w-4 h-4 text-blue-500" />} 
           value={stats.realUsers.toLocaleString()} 
