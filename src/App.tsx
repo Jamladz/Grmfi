@@ -333,7 +333,21 @@ function App() {
               hasCollectedWelcomeBonus: false,
               hasProcessedReferral: false
             };
-            setDoc(userRef, initialData).then(() => {
+
+            runTransaction(db, async (transaction) => {
+              const uSnap = await transaction.get(userRef);
+              if (!uSnap.exists()) {
+                transaction.set(userRef, initialData);
+                
+                // Update Global Stats
+                const statsRef = doc(db, 'global', 'stats');
+                transaction.set(statsRef, {
+                  totalUsers: increment(1),
+                  ...(tgUser?.id ? { realUsers: increment(1) } : {}),
+                  lastUpdatedAt: serverTimestamp()
+                }, { merge: true });
+              }
+            }).then(() => {
               processReferral(userDocId, initialData, tgUser).then((res) => {
                 if (res && res.success && res.reward) {
                   setReferralBonusModal({

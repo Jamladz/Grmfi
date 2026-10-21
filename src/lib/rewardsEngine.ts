@@ -178,6 +178,19 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
 
       // 2. Save Transaction Record
       transaction.set(txRef, txData, { merge: true });
+
+      // 3. Update Global Stats
+      const statsRef = doc(db, 'global', 'stats');
+      const statsUpdate: any = {
+        lastUpdatedAt: serverTimestamp()
+      };
+      if (amount > 0) {
+        statsUpdate.totalGrmf = increment(amount);
+      }
+      if (source.startsWith('referral_')) {
+        statsUpdate.totalReferrals = increment(1);
+      }
+      transaction.set(statsRef, statsUpdate, { merge: true });
     });
 
     console.log(`[GrantReward] Success: ${txId}`);

@@ -78,6 +78,15 @@
             "totalRewardCount": "number",
             "lastUpdatedAt": "timestamp"
           }
+        },
+        "stats": {
+          "fields": {
+            "totalUsers": "number",
+            "realUsers": "number",
+            "totalReferrals": "number",
+            "totalGrmf": "number",
+            "lastUpdatedAt": "timestamp"
+          }
         }
       }
     }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, query, orderBy, limit, updateDoc, doc, getCountFromServer, where } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, updateDoc, doc, getCountFromServer, where, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Users, Search, RefreshCw, Activity, DollarSign, UserPlus, CheckCircle, XCircle, TrendingUp } from 'lucide-react';
 
@@ -21,35 +21,54 @@ export const AdminView: React.FC = () => {
   const fetchData = async (currentSort: string = sortBy) => {
     setLoading(true);
     try {
-      // Fetch users sorted by last active for the list
+      // Fetch global stats from the summary document first (Professional approach)
+      const statsRef = doc(db, 'global', 'stats');
+      const statsSnap = await getDoc(statsRef);
+      let globalStats = statsSnap.exists() ? statsSnap.data() : null;
+
+      // Fetch sample users for the list and local totals (for comparison/validation)
       let orderField = 'lastActiveTimestamp';
       if (currentSort === 'referrals') orderField = 'referralsCount';
       if (currentSort === 'grmf') orderField = 'realBalances.GRMF';
-      const qUsers = query(collection(db, 'users'), orderBy(orderField, 'desc'), limit(10000));
+      const qUsers = query(collection(db, 'users'), orderBy(orderField, 'desc'), limit(100));
       const snapUsers = await getDocs(qUsers);
       const usersData = snapUsers.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       setUsers(usersData);
 
-      // Fetch global stats using count queries for accuracy
-      const totalUsersSnap = await getCountFromServer(collection(db, 'users'));
-      
-      const realUsersQuery = query(collection(db, 'users'), where('telegramId', '>', 0));
-      const realUsersSnap = await getCountFromServer(realUsersQuery);
-      
-      const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-      const active24hQuery = query(collection(db, 'users'), where('lastActiveTimestamp', '>', twentyFourHoursAgo));
-      const active24hSnap = await getCountFromServer(active24hQuery);
+      // If global stats don't exist, calculate them (One-time migration/init)
+      if (!globalStats || !globalStats.totalUsers) {
+        console.log("Initializing global stats via count queries...");
+        const totalUsersSnap = await getCountFromServer(collection(db, 'users'));
+        const realUsersQuery = query(collection(db, 'users'), where('telegramId', '>', 0));
+        const realUsersSnap = await getCountFromServer(realUsersQuery);
+        const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+        const active24hQuery = query(collection(db, 'users'), where('lastActiveTimestamp', '>', twentyFourHoursAgo));
+        const active24hSnap = await getCountFromServer(active24hQuery);
 
-      // Estimate total tokens and referrals from the fetched sample
-      const localTotalGrmf = usersData.reduce((acc: number, u: any) => acc + (u.realBalances?.GRMF || 0), 0);
-      const localTotalRefs = usersData.reduce((acc: number, u: any) => acc + (u.referralsCount || 0), 0);
+        globalStats = {
+          totalUsers: totalUsersSnap.data().count,
+          realUsers: realUsersSnap.data().count,
+          active24h: active24hSnap.data().count,
+          totalReferrals: usersData.reduce((acc: number, u: any) => acc + (u.referralsCount || 0), 0), // Best effort init
+          totalGrmf: usersData.reduce((acc: number, u: any) => acc + (u.realBalances?.GRMF || 0), 0)    // Best effort init
+        };
+        
+        // Save initial stats if admin
+        await setDoc(statsRef, { ...globalStats, lastUpdatedAt: serverTimestamp() }, { merge: true });
+      } else {
+        // Still fetch active 24h as it's dynamic
+        const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+        const active24hQuery = query(collection(db, 'users'), where('lastActiveTimestamp', '>', twentyFourHoursAgo));
+        const active24hSnap = await getCountFromServer(active24hQuery);
+        globalStats.active24h = active24hSnap.data().count;
+      }
 
       setStats({
-        totalUsers: totalUsersSnap.data().count,
-        realUsers: realUsersSnap.data().count,
-        active24h: active24hSnap.data().count,
-        totalReferrals: localTotalRefs, // Note: This is from top 100
-        totalGrmf: localTotalGrmf     // Note: This is from top 100
+        totalUsers: globalStats.totalUsers || 0,
+        realUsers: globalStats.realUsers || 0,
+        active24h: globalStats.active24h || 0,
+        totalReferrals: globalStats.totalReferrals || 0,
+        totalGrmf: globalStats.totalGrmf || 0
       });
 
       const qWithdraw = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'), limit(50));
@@ -144,7 +163,6 @@ export const AdminView: React.FC = () => {
           icon={<UserPlus className="w-4 h-4 text-purple-500" />} 
           value={stats.totalReferrals.toLocaleString()} 
           label="Referrals" 
-          subLabel="Sample Top 100"
           color="purple"
         />
         <StatCard 
@@ -152,7 +170,6 @@ export const AdminView: React.FC = () => {
           value={stats.totalGrmf.toLocaleString()} 
           label="Total GRMF" 
           unit="T"
-          subLabel="Sample Top 100"
           color="amber"
         />
       </div>

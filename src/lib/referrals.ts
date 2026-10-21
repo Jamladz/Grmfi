@@ -155,6 +155,14 @@ export const processReferral = async (
         reward: REFERRER_REWARD,
         createdAt: serverTimestamp()
       });
+
+      // 4. Update Global Stats
+      const statsRef = doc(db, 'global', 'stats');
+      transaction.set(statsRef, {
+        totalReferrals: increment(1),
+        totalGrmf: increment(WELCOME_BONUS + REFERRER_REWARD),
+        lastUpdatedAt: serverTimestamp()
+      }, { merge: true });
     });
     
     localStorage.removeItem(LOCAL_STORAGE_KEY);
