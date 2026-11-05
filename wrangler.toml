@@ -1,4 +1,4 @@
-name = "grmf-fi-miniapp"
+name = "grmfi"
 main = "worker.ts"
 compatibility_date = "2025-01-01"
 
