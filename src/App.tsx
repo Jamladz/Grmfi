@@ -1020,44 +1020,55 @@ function App() {
         </AnimatePresence>
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-200/80 px-2 sm:px-4 pt-1 pb-[calc(0.35rem+env(safe-area-inset-bottom,10px))] z-50">
-        <div className="max-w-xl mx-auto grid grid-cols-6 items-center gap-0.5">
-          <NavButton 
-            active={activeView === 'swap'} 
-            onClick={() => { triggerHaptic('light'); setActiveView('swap'); }} 
-            icon={<ArrowLeftRight className="w-5 h-5" />} 
-            label="Swap" 
-          />
-          <NavButton 
-            active={activeView === 'tasks'} 
-            onClick={() => { triggerHaptic('light'); setActiveView('tasks'); }} 
-            icon={<ListTodo className="w-5 h-5" />} 
-            label="Tasks" 
-          />
-          <NavButton 
-            active={activeView === 'referrals'} 
-            onClick={() => { triggerHaptic('light'); setActiveView('referrals'); }} 
-            icon={<Users className="w-5 h-5" />} 
-            label="Friends" 
-          />
-          <NavButton 
-            active={activeView === 'airdrop'} 
-            onClick={() => { triggerHaptic('light'); setActiveView('airdrop'); }} 
-            icon={<Trophy className="w-5 h-5" />} 
-            label="Airdrop" 
-          />
-          <NavButton 
-            active={activeView === 'presale'} 
-            onClick={() => { triggerHaptic('light'); setActiveView('presale'); }} 
-            icon={<Rocket className="w-5 h-5" />} 
-            label="Presale" 
-          />
-          <NavButton 
-            active={activeView === 'profile'} 
-            onClick={() => { triggerHaptic('light'); setActiveView('profile'); }} 
-            icon={<User className="w-5 h-5" />} 
-            label="Profile" 
-          />
+      <nav className="fixed bottom-0 left-0 right-0 px-3 sm:px-4 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom,10px))] z-50 pointer-events-none">
+        <div className="max-w-xl mx-auto flex items-center gap-2.5 pointer-events-auto">
+          {/* Rounded-Edge Capsule Frame for the 5 Main Navigation Buttons */}
+          <div className="flex-1 bg-white/95 backdrop-blur-xl border border-slate-200/85 shadow-lg shadow-slate-900/8 rounded-full p-1.5 grid grid-cols-5 items-center gap-0.5">
+            <NavButton 
+              active={activeView === 'swap'} 
+              onClick={() => { triggerHaptic('light'); setActiveView('swap'); }} 
+              icon={<ArrowLeftRight className="w-4 h-4" />} 
+              label="Swap" 
+            />
+            <NavButton 
+              active={activeView === 'tasks'} 
+              onClick={() => { triggerHaptic('light'); setActiveView('tasks'); }} 
+              icon={<ListTodo className="w-4 h-4" />} 
+              label="Tasks" 
+            />
+            <NavButton 
+              active={activeView === 'referrals'} 
+              onClick={() => { triggerHaptic('light'); setActiveView('referrals'); }} 
+              icon={<Users className="w-4 h-4" />} 
+              label="Friends" 
+            />
+            <NavButton 
+              active={activeView === 'airdrop'} 
+              onClick={() => { triggerHaptic('light'); setActiveView('airdrop'); }} 
+              icon={<Trophy className="w-4 h-4" />} 
+              label="Airdrop" 
+            />
+            <NavButton 
+              active={activeView === 'presale'} 
+              onClick={() => { triggerHaptic('light'); setActiveView('presale'); }} 
+              icon={<Rocket className="w-4 h-4" />} 
+              label="Presale" 
+            />
+          </div>
+
+          {/* Standalone Circular Profile Icon Button on the Same Row */}
+          <button
+            onClick={() => { triggerHaptic('light'); setActiveView('profile'); }}
+            aria-label="Profile"
+            title="Profile"
+            className={`shrink-0 w-[54px] h-[54px] rounded-full flex items-center justify-center border transition-all active:scale-95 cursor-pointer shadow-lg ${
+              activeView === 'profile'
+                ? 'bg-[#0088CC] text-white border-[#0088CC] shadow-[#0088CC]/25 ring-2 ring-[#0088CC]/20'
+                : 'bg-white/95 backdrop-blur-xl text-slate-600 hover:text-slate-900 border-slate-200/85 shadow-slate-900/8'
+            }`}
+          >
+            <User className="w-5 h-5" strokeWidth={activeView === 'profile' ? 2.5 : 2} />
+          </button>
         </div>
       </nav>
 
@@ -1188,14 +1199,14 @@ function App() {
 const NavButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
   <button 
     onClick={onClick}
-    className={`min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
-      active ? 'text-[#0088CC]' : 'text-slate-400 hover:text-slate-700'
+    className={`min-h-[44px] py-1.5 px-1 flex flex-col items-center justify-center gap-0.5 rounded-full transition-all active:scale-95 cursor-pointer ${
+      active 
+        ? 'bg-sky-50 text-[#0088CC]' 
+        : 'text-slate-500 hover:text-slate-800'
     }`}
   >
-    <div className={`px-3 py-1 rounded-xl transition-colors ${active ? 'bg-sky-50' : ''}`}>
-      {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-5 h-5', strokeWidth: active ? 2.4 : 1.9 })}
-    </div>
-    <span className={`text-[10px] tracking-tight whitespace-nowrap leading-none ${active ? 'font-bold text-[#0088CC]' : 'font-semibold text-slate-500'}`}>
+    {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-4 h-4', strokeWidth: active ? 2.5 : 2 })}
+    <span className={`text-[10px] tracking-tight whitespace-nowrap leading-none ${active ? 'font-extrabold text-[#0088CC]' : 'font-semibold text-slate-500'}`}>
       {label}
     </span>
   </button>
