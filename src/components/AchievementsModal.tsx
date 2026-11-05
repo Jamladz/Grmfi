@@ -38,13 +38,13 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
   if (!isOpen) return null;
 
   // Extract user metrics from profile
-  const inviteCount = userProfile?.inviteCount || (userProfile?.invitedUsers?.length || 0);
+  const inviteCount = Math.max(userProfile?.referralsCount || 0, userProfile?.inviteCount || 0, userProfile?.invitedUsers?.length || 0);
   const realGrmf = userProfile?.realBalances?.GRMF || 0;
   const isWalletConnected = !!wallet || !!userProfile?.walletAddress;
   
   // Calculate completed tasks count
   const taskProgress = userProfile?.taskProgress || {};
-  const completedTasksCount = Object.values(taskProgress).filter((t: any) => t?.status === 'completed').length;
+  const completedTasksCount = Object.values(taskProgress).filter((t: any) => t?.status === 'completed' || t?.status === 'claimed').length;
 
   // Claimed achievements dictionary
   const claimedMap = userProfile?.claimedAchievements || {};

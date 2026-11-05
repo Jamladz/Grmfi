@@ -84,13 +84,16 @@ export const AdminView: React.FC = () => {
     fetchData(sortBy);
   }, [sortBy]);
 
+  const [adminNotice, setAdminNotice] = useState<string | null>(null);
+
   const handleWithdrawalStatus = async (id: string, status: 'approved' | 'rejected') => {
     try {
       await updateDoc(doc(db, 'withdrawal_requests', id), { status });
       setWithdrawals(prev => prev.map(w => w.id === id ? { ...w, status } : w));
     } catch (e) {
       console.error(e);
-      alert('Failed to update status. Only admins can do this.');
+      setAdminNotice('Failed to update status. Only admins can do this.');
+      setTimeout(() => setAdminNotice(null), 3500);
     }
   };
 
@@ -117,6 +120,11 @@ export const AdminView: React.FC = () => {
 
   return (
     <div className="p-4 flex flex-col gap-4 pb-20 max-w-4xl mx-auto">
+      {adminNotice && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-2xl text-xs font-bold">
+          {adminNotice}
+        </div>
+      )}
       <div className="flex justify-between items-center bg-white p-5 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -mr-10 -mt-10" />
         <div className="flex items-center gap-4 relative z-10">

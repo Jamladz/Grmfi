@@ -154,9 +154,9 @@ export function getUserTotalXp(userProfile: any): number {
   const explicitXp = typeof userProfile.xp === 'number' ? userProfile.xp : 0;
   
   // Calculate activity-derived XP for smooth baseline progression
-  const inviteCount = userProfile?.inviteCount || (userProfile?.invitedUsers?.length || 0);
+  const inviteCount = Math.max(userProfile?.referralsCount || 0, userProfile?.inviteCount || 0, userProfile?.invitedUsers?.length || 0);
   const taskProgress = userProfile?.taskProgress || {};
-  const completedTasksCount = Object.values(taskProgress).filter((t: any) => t?.status === 'completed').length;
+  const completedTasksCount = Object.values(taskProgress).filter((t: any) => t?.status === 'completed' || t?.status === 'claimed').length;
   const claimedAchievementsCount = Object.keys(userProfile?.claimedAchievements || {}).length;
 
   const activityXp = (inviteCount * 100) + (completedTasksCount * 40) + (claimedAchievementsCount * 60);

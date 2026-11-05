@@ -169,12 +169,15 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       flatUserUpdates[k] = v;
     });
 
+    const nestedUserUpdates: Record<string, any> = {};
+    applyDotNotationToObject(nestedUserUpdates, flatUserUpdates);
+
     console.log(`[GrantReward] Attempting to grant ${amount} GRMF & ${xp} XP to ${userId} via ${source}`);
 
     // Execute atomic transaction
     await runTransaction(db, async (transaction) => {
-      // 1. Update User Document safely with flat keys for deep merge
-      transaction.set(userRef, flatUserUpdates, { merge: true });
+      // 1. Update User Document safely with nested map structure for deep merge
+      transaction.set(userRef, nestedUserUpdates, { merge: true });
 
       // 2. Save Transaction Record
       transaction.set(txRef, txData, { merge: true });
@@ -215,6 +218,7 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
           if (xp > 0) {
             profile.xp = (profile.xp || 0) + xp;
           }
+          applyDotNotationToObject(profile, extraUserUpdates || {});
           localStorage.setItem('grmf_cached_profile', JSON.stringify(profile));
         }
       } catch (e) {}
@@ -245,7 +249,10 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
         flatUserUpdates[k] = v;
       });
 
-      await setDoc(userRef, flatUserUpdates, { merge: true });
+      const nestedUserUpdates: Record<string, any> = {};
+      applyDotNotationToObject(nestedUserUpdates, flatUserUpdates);
+
+      await setDoc(userRef, nestedUserUpdates, { merge: true });
 
       await setDoc(txRef, {
         id: txId,

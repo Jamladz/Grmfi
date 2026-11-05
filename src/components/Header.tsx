@@ -8,50 +8,38 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  onOpenWalletDrawer,
   onOpenSettings,
 }) => {
   return (
-    <header className="sticky top-0 z-40 w-full bg-white/90 backdrop-blur-xl border-b border-slate-100 px-4 lg:px-8 py-3">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-        {/* Logo & Brand */}
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3 cursor-pointer group">
-            <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-400 via-blue-500 to-blue-600 p-[1.5px] shadow-lg shadow-blue-500/10 group-hover:scale-105 transition-all duration-300">
-              <div className="w-full h-full bg-white rounded-[14px] flex items-center justify-center overflow-hidden border border-slate-100">
-                <img src="https://i.suar.me/vAdG5/l" alt="GRMF Logo" className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500" />
-              </div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white border border-slate-100 flex items-center justify-center">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              </div>
-            </div>
-            <div className="flex flex-col justify-center">
-              <span className="text-lg font-black tracking-tighter text-slate-900 leading-none">
-                GRMF Fi
-              </span>
-              <div className="flex items-center gap-1.5 mt-1.5 opacity-60">
-                <div className="h-[1px] w-3 bg-blue-500/50" />
-                <span className="text-[8px] font-black text-slate-500 tracking-[0.25em] uppercase whitespace-nowrap">
-                  GRMF DEX
-                </span>
-              </div>
-            </div>
+    <header className="sticky top-0 z-40 w-full bg-white/85 backdrop-blur-xl border-b border-slate-200/70 px-4 lg:px-8 h-14 flex items-center">
+      <div className="w-full max-w-6xl mx-auto flex items-center justify-between gap-4">
+        {/* Zone 1: Clean Brand Lockup */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-slate-900 p-0.5 shadow-xs overflow-hidden shrink-0">
+            <img
+              src="https://i.suar.me/vAdG5/l"
+              alt="GRMF Fi"
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover rounded-[10px]"
+            />
           </div>
+          <span className="text-base font-extrabold tracking-tight text-slate-900 whitespace-nowrap">
+            GRMF Fi
+          </span>
         </div>
 
-        {/* Right Actions */}
-        <div className="flex items-center gap-2">
-          {/* Settings Button */}
+        {/* Zone 3: Actions */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={onOpenSettings}
-            className="p-2 rounded-xl bg-slate-50 border border-slate-100 text-slate-500 hover:text-blue-500 hover:border-blue-200 transition-all sm:p-2.5 sm:rounded-2xl"
-            title="Settings"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl bg-slate-100/80 hover:bg-slate-200/70 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+            title="Swap Settings"
+            aria-label="Swap Settings"
           >
             <SlidersHorizontal className="w-4 h-4" />
           </button>
 
-          {/* Real TonConnect Button */}
-          <div className="ton-connect-wrapper scale-90 sm:scale-100 origin-right">
+          <div className="ton-connect-wrapper scale-90 sm:scale-95 origin-right">
             <TonConnectButton />
           </div>
         </div>

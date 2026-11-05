@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { User, Shield, Award, Wallet, ChevronRight, Trophy, Zap, Star, FileText } from 'lucide-react';
+import { User, Shield, Wallet, ChevronRight, Trophy, Zap, Star, FileText } from 'lucide-react';
 import { TOKENS } from '../data/tokens';
 import { AchievementsModal } from './AchievementsModal';
 import { RanksModal } from './RanksModal';
 import { WhitepaperModal } from './WhitepaperModal';
 import { HomeScreenShortcutMenuItem } from './HomeScreenShortcutMenuItem';
 import { getUserTotalXp, getUserLevelInfo } from '../lib/levelSystem';
+import { triggerHaptic } from '../lib/telegram';
 
 interface ProfileViewProps {
   balances: Record<string, number>;
@@ -29,16 +30,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
 
   const realBalances = userProfile?.realBalances || { GRMF: 0 };
 
-  // Calculate user total XP and level details
   const totalXp = getUserTotalXp(userProfile);
   const levelInfo = getUserLevelInfo(totalXp);
   const { currentRank, nextRank, isMaxLevel, progressPercentage, xpCurrentLevel, xpNeededForNext } = levelInfo;
 
-  // Calculate unclaimed achievements count for badge
-  const inviteCount = userProfile?.inviteCount || (userProfile?.invitedUsers?.length || 0);
+  const inviteCount = Math.max(userProfile?.referralsCount || 0, userProfile?.inviteCount || 0, userProfile?.invitedUsers?.length || 0);
   const realGrmf = userProfile?.realBalances?.GRMF || 0;
   const taskProgress = userProfile?.taskProgress || {};
-  const completedTasksCount = Object.values(taskProgress).filter((t: any) => t?.status === 'completed').length;
+  const completedTasksCount = Object.values(taskProgress).filter((t: any) => t?.status === 'completed' || t?.status === 'claimed').length;
   const claimedMap = userProfile?.claimedAchievements || {};
 
   const checkUnlocked = [
@@ -56,129 +55,106 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
 
   return (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="flex flex-col gap-5"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex flex-col gap-4 pb-8"
     >
-      {/* Profile Header */}
-      <div className="flex flex-col items-center text-center px-4">
-        <div className="relative group">
-          <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-[#24A1DE] to-blue-600 p-1 shadow-xl shadow-blue-500/10">
-            <div className="w-full h-full rounded-full bg-white flex items-center justify-center overflow-hidden border-2 border-slate-50">
-              {userProfile?.photoUrl ? (
-                <img src={userProfile.photoUrl} alt="Profile" className="w-full h-full object-cover" />
-              ) : (
-                <User className="w-10 h-10 text-[#24A1DE]" />
-              )}
-            </div>
-          </div>
-          <div className="absolute -bottom-1 -right-1">
-            {currentRank.imageUrl ? (
-              <div className="w-8 h-8 flex items-center justify-center drop-shadow-md">
-                <img src={currentRank.imageUrl} alt={currentRank.name} className="w-full h-full object-contain" />
-              </div>
+      {/* Profile Identity Card */}
+      <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs flex items-center gap-4">
+        <div className="relative shrink-0">
+          <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200/80">
+            {userProfile?.photoUrl ? (
+              <img src={userProfile.photoUrl} alt="Profile" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
             ) : (
-              <div className="bg-amber-500 p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-xs">
-                <span>{currentRank.badgeIcon}</span>
-              </div>
+              <User className="w-8 h-8 text-[#0088CC]" />
             )}
           </div>
+          {currentRank.imageUrl && (
+            <div className="absolute -bottom-1.5 -right-1.5 w-7 h-7 bg-white rounded-full p-0.5 shadow-sm border border-slate-100 flex items-center justify-center">
+              <img src={currentRank.imageUrl} alt={currentRank.name} referrerPolicy="no-referrer" className="w-full h-full object-contain" />
+            </div>
+          )}
         </div>
 
-        <h2 className="mt-3 text-xl font-black text-slate-900 tracking-tight">
-          {displayUsername}
-        </h2>
-
-        {/* Dynamic Level & Rank Badge */}
-        <div className="flex items-center gap-2 mt-1.5">
-          <span className={`text-[11px] font-black px-3 py-0.5 rounded-full border shadow-sm flex items-center gap-1.5 ${currentRank.badgeBg}`}>
-            {currentRank.imageUrl ? (
-              <img src={currentRank.imageUrl} alt={currentRank.name} className="w-4 h-4 object-contain drop-shadow-sm" />
-            ) : (
-              <span>{currentRank.badgeIcon}</span>
-            )}
-            <span>Level {currentRank.level} • {currentRank.name}</span>
-          </span>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg font-extrabold text-slate-900 tracking-tight truncate">
+            {displayUsername}
+          </h1>
+          <p className="text-xs text-slate-500 font-medium mt-0.5 flex items-center gap-1.5">
+            <span className="font-bold text-slate-700">Level {currentRank.level}</span>
+            <span className="text-slate-300">·</span>
+            <span>{currentRank.name}</span>
+            <span className="text-slate-300">·</span>
+            <span className="font-mono tabular-nums text-[#0088CC] font-bold">{totalXp.toLocaleString()} XP</span>
+          </p>
         </div>
       </div>
 
-      {/* Level XP Progress Card */}
+      {/* Rank & XP Progression Card */}
       <div 
-        onClick={() => setIsRanksOpen(true)}
-        className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-3.5 sm:p-4 border border-slate-800 shadow-lg cursor-pointer hover:border-amber-400/50 transition-all group relative overflow-hidden active:scale-[0.99]"
+        onClick={() => {
+          triggerHaptic('light');
+          setIsRanksOpen(true);
+        }}
+        className="bg-slate-900 text-white rounded-3xl p-5 shadow-md cursor-pointer hover:bg-slate-900/95 transition-all group active:scale-[0.99]"
       >
-        <div className="absolute top-0 right-0 w-28 h-28 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
-
-        <div className="flex items-center justify-between mb-2.5 relative z-10">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
             {currentRank.imageUrl ? (
-              <div className="w-9 h-9 shrink-0 flex items-center justify-center drop-shadow-md">
-                <img src={currentRank.imageUrl} alt={currentRank.name} className="w-full h-full object-contain" />
-              </div>
+              <img src={currentRank.imageUrl} alt={currentRank.name} referrerPolicy="no-referrer" className="w-9 h-9 object-contain shrink-0" />
             ) : (
-              <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 font-bold text-base shrink-0 shadow-inner">
+              <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-base shrink-0">
                 {currentRank.badgeIcon}
               </div>
             )}
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-black uppercase tracking-wider text-amber-400">
-                  Level {currentRank.level}
-                </span>
-                <span className="text-[9px] font-bold text-slate-300 uppercase tracking-wider bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700/80">
-                  {currentRank.name}
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-extrabold text-amber-400">
+                  Level {currentRank.level} · {currentRank.name}
                 </span>
               </div>
-              <p className="text-[9.5px] text-slate-400 font-medium line-clamp-1">
+              <p className="text-[11px] text-slate-400 font-medium line-clamp-1 mt-0.5">
                 {currentRank.description}
               </p>
             </div>
           </div>
 
-          <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-amber-400 group-hover:translate-x-0.5 transition-all shrink-0" />
+          <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0" />
         </div>
 
-        {/* Compact Progress Bar */}
-        <div className="space-y-1 relative z-10">
-          <div className="flex items-center justify-between text-[10px] font-bold">
-            <span className="text-slate-300 flex items-center gap-1">
-              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span>{totalXp.toLocaleString()} XP</span>
-            </span>
-            <span className="text-amber-400">
-              {isMaxLevel ? 'MAX' : `${Math.round(progressPercentage)}%`}
-            </span>
-          </div>
-
-          <div className="w-full h-2 bg-slate-800 rounded-full p-0.5 border border-slate-700/70 overflow-hidden">
+        <div className="space-y-1.5">
+          <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${progressPercentage}%` }}
-              transition={{ duration: 1, ease: 'easeOut' }}
-              className={`h-full rounded-full bg-gradient-to-r ${currentRank.color} shadow-sm`}
+              transition={{ duration: 0.8, ease: 'easeOut' }}
+              className={`h-full rounded-full bg-gradient-to-r ${currentRank.color}`}
             />
           </div>
 
-          <div className="flex justify-between items-center text-[9px] text-slate-400 font-medium">
-            <span className="flex items-center gap-1">Next: {nextRank.name} {nextRank.imageUrl ? <img src={nextRank.imageUrl} className="w-3 h-3 object-contain drop-shadow-sm" alt="" /> : `(${nextRank.badgeIcon})`}</span>
-            <span>
-              {isMaxLevel ? 'Max Rank' : `${xpCurrentLevel}/${xpNeededForNext} XP`}
+          <div className="flex justify-between items-center text-[11px] text-slate-400 font-medium">
+            <span className="flex items-center gap-1">
+              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <span>Next: {nextRank.name}</span>
+            </span>
+            <span className="font-mono tabular-nums text-slate-300">
+              {isMaxLevel ? 'Max Level Reached' : `${xpCurrentLevel.toLocaleString()} / ${xpNeededForNext.toLocaleString()} XP`}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Assets Section */}
-      <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
+      {/* Unified Global Assets Ledger */}
+      <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Wallet className="w-4 h-4 text-slate-400" />
-            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Global Assets</h3>
+            <h2 className="text-sm font-extrabold text-slate-900">Portfolio Balances</h2>
           </div>
-          <span className="text-[8px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full uppercase tracking-tighter border border-blue-100">Mainnet Enabled</span>
+          <span className="text-xs text-slate-400 font-medium">Mainnet & Testnet</span>
         </div>
 
-        <div className="grid gap-3">
+        <div className="divide-y divide-slate-100">
           {displayedTokens.map(token => {
             const realVal = realBalances[token.symbol] || 0;
             const betaVal = balances[token.symbol] || 0;
@@ -186,23 +162,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
             const value = (balance * (token.priceUsd || 0)).toFixed(2);
 
             return (
-              <div key={token.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+              <div key={token.id} className="py-3 first:pt-1 last:pb-0 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden border border-slate-200 ${token.iconBg}`}>
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center overflow-hidden border border-slate-200/60 shrink-0 ${token.iconBg}`}>
                     {token.iconUrl ? (
-                      <img src={token.iconUrl} alt={token.name} className="w-full h-full object-cover" />
+                      <img src={token.iconUrl} alt={token.name} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
                     ) : (
-                      <span className="text-white font-bold text-[10px]">{token.symbol[0]}</span>
+                      <span className="text-white font-bold text-xs">{token.symbol[0]}</span>
                     )}
                   </div>
-                  <div className="flex flex-col">
-                    <span className="text-slate-900 font-bold text-xs">{token.name}</span>
-                    <span className="text-slate-500 text-[9px] font-bold uppercase tracking-widest">{token.symbol}</span>
+                  <div>
+                    <span className="text-slate-900 font-bold text-xs block">{token.name}</span>
+                    <span className="text-slate-400 text-[11px] font-medium">{token.symbol}</span>
                   </div>
                 </div>
-                <div className="flex flex-col items-end">
-                  <span className="text-slate-900 font-black text-xs">{balance.toLocaleString()}</span>
-                  <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-500">
+                <div className="text-right font-mono tabular-nums">
+                  <span className="text-slate-900 font-extrabold text-xs block">{balance.toLocaleString()}</span>
+                  <span className="text-[11px] font-medium text-slate-400">
                     ${value}
                   </span>
                 </div>
@@ -212,52 +188,62 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
         </div>
       </div>
 
-      {/* Menu Options */}
-      <div className="flex flex-col gap-2">
+      {/* Grouped Navigation Menu */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
         <HomeScreenShortcutMenuItem />
-        <MenuButton 
+        <MenuRow 
           icon={<Star className="w-4 h-4 text-amber-500" />} 
           label="Wealth Tiers & Ranks" 
-          badge={`Level ${currentRank.level}`}
-          onClick={() => setIsRanksOpen(true)}
+          meta={`Level ${currentRank.level}`}
+          onClick={() => {
+            triggerHaptic('light');
+            setIsRanksOpen(true);
+          }}
         />
-        <MenuButton 
-          icon={<Trophy className="w-4 h-4 text-amber-500" />} 
+        <MenuRow 
+          icon={<Trophy className="w-4 h-4 text-[#0088CC]" />} 
           label="Achievements" 
-          badge={readyCount > 0 ? `${readyCount} Ready` : undefined}
-          onClick={() => setIsAchievementsOpen(true)}
+          meta={readyCount > 0 ? `${readyCount} Claimable` : 'Milestones'}
+          highlightMeta={readyCount > 0}
+          onClick={() => {
+            triggerHaptic('light');
+            setIsAchievementsOpen(true);
+          }}
         />
-        <MenuButton 
+        <MenuRow 
           icon={<FileText className="w-4 h-4 text-indigo-500" />} 
-          label="Project Whitepaper" 
-          badge="v2.4"
-          onClick={() => setIsWhitepaperOpen(true)}
+          label="Protocol Whitepaper" 
+          meta="v2.4"
+          onClick={() => {
+            triggerHaptic('light');
+            setIsWhitepaperOpen(true);
+          }}
         />
         {isAdmin && (
-          <MenuButton 
+          <MenuRow 
             icon={<Shield className="w-4 h-4 text-rose-500" />} 
-            label="Admin Panel" 
-            badge="Owner"
-            onClick={onOpenAdmin}
+            label="Admin Console" 
+            meta="System Owner"
+            onClick={() => {
+              triggerHaptic('light');
+              onOpenAdmin?.();
+            }}
           />
         )}
       </div>
 
-      {/* Ranks Modal */}
       <RanksModal
         isOpen={isRanksOpen}
         onClose={() => setIsRanksOpen(false)}
         userProfile={userProfile}
       />
 
-      {/* Achievements Modal */}
       <AchievementsModal 
         isOpen={isAchievementsOpen} 
         onClose={() => setIsAchievementsOpen(false)} 
         userProfile={userProfile} 
       />
 
-      {/* Whitepaper Modal */}
       <WhitepaperModal
         isOpen={isWhitepaperOpen}
         onClose={() => setIsWhitepaperOpen(false)}
@@ -266,19 +252,21 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
   );
 };
 
-const MenuButton = ({ icon, label, badge, onClick }: { icon: React.ReactNode, label: string, badge?: string, onClick?: () => void }) => (
+const MenuRow = ({ icon, label, meta, highlightMeta, onClick }: { icon: React.ReactNode, label: string, meta?: string, highlightMeta?: boolean, onClick?: () => void }) => (
   <button 
     onClick={onClick}
-    className="flex items-center justify-between p-4 rounded-xl bg-white border border-slate-100 hover:bg-slate-50 transition-colors active:scale-[0.98] shadow-sm cursor-pointer w-full text-left"
+    className="min-h-[52px] flex items-center justify-between px-5 py-3.5 bg-white hover:bg-slate-50/80 transition-colors cursor-pointer w-full text-left"
   >
     <div className="flex items-center gap-3">
-      <div className="text-slate-400">{icon}</div>
-      <span className="text-xs font-bold text-slate-900 uppercase tracking-widest">{label}</span>
+      <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200/60 flex items-center justify-center shrink-0">
+        {icon}
+      </div>
+      <span className="text-xs font-bold text-slate-900">{label}</span>
     </div>
     <div className="flex items-center gap-2">
-      {badge && (
-        <span className="text-[9px] font-black text-white bg-amber-500 px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
-          {badge}
+      {meta && (
+        <span className={`text-xs font-semibold ${highlightMeta ? 'text-emerald-600 font-bold' : 'text-slate-400'}`}>
+          {meta}
         </span>
       )}
       <ChevronRight className="w-4 h-4 text-slate-300" />

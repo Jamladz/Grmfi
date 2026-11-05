@@ -13,8 +13,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.auth.uid == userId;
-      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isSignedIn() && (request.auth.uid == userId || userId.matches('^tg_[0-9]+$') || isAdmin());
       allow delete: if isAdmin();
     }
     match /userTasks/{taskDocId} {
@@ -26,18 +25,18 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
     match /transactions/{txId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId.matches('^tg_[0-9]+$') || isAdmin());
       allow create: if isSignedIn();
       allow update, delete: if isAdmin();
     }
     match /global/{docId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn(); // Allow increments from app, could be hardened further
+      allow write: if isSignedIn();
     }
     match /withdrawal_requests/{docId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAdmin();
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId.matches('^tg_[0-9]+$') || isAdmin());
+      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || request.resource.data.userId.matches('^tg_[0-9]+$'));
+      allow update: if isSignedIn() && isAdmin();
       allow delete: if isAdmin();
     }
   }

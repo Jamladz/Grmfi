@@ -51,6 +51,8 @@ import { TasksView } from './components/TasksView';
 import { TokenSelectModal } from './components/TokenSelectModal';
 import { AdminView } from './components/AdminView';
 import { PresaleHub } from './components/PresaleHub';
+import { SettingsModal } from './components/SettingsModal';
+import { triggerHaptic } from './lib/telegram';
 import { Users, ShieldAlert, Gift, Rocket } from 'lucide-react';
 
 import { TOKENS, POOLS } from './data/tokens';
@@ -70,9 +72,22 @@ function safeCloneDeep(obj: any): any {
   return copy;
 }
 
+const DAILY_TASK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+function sanitizeTaskTimestamp(val: any, now = Date.now()): number {
+  if (typeof val !== 'number' || isNaN(val) || val <= 0) return 0;
+  let ts = val;
+  // Recover timestamps that were accidentally summed together by legacy dot-key normalization
+  while (ts > now + 60000) {
+    ts = Math.floor(ts / 2);
+  }
+  return ts;
+}
+
 function normalizeAndSanitizeUserData(rawData: any) {
   if (!rawData || typeof rawData !== 'object') return { data: rawData || {} };
   
+  const now = Date.now();
   const data = safeCloneDeep(rawData);
 
   Object.keys(rawData).forEach(key => {
@@ -88,15 +103,41 @@ function normalizeAndSanitizeUserData(rawData: any) {
       }
       const last = parts[parts.length - 1];
       const val = rawData[key];
+      const isTimestampField = last.endsWith('At') || last.endsWith('Timestamp');
+      const isTaskField = key.startsWith('taskProgress.');
 
-      if (typeof val === 'number' && typeof target[last] === 'number') {
-        target[last] += val;
+      if (isTimestampField && typeof val === 'number') {
+        const cleanVal = sanitizeTaskTimestamp(val, now);
+        const cleanExisting = sanitizeTaskTimestamp(target[last], now);
+        target[last] = Math.max(cleanExisting, cleanVal);
+      } else if (isTaskField) {
+        if (typeof val === 'number' && typeof target[last] === 'number') {
+          target[last] = Math.max(target[last], val);
+        } else if (val !== undefined && val !== null) {
+          target[last] = val;
+        }
+      } else if (typeof val === 'number' && typeof target[last] === 'number') {
+        target[last] = Math.max(target[last], val);
       } else if (target[last] === undefined || target[last] === null) {
         target[last] = val;
       }
       delete data[key];
     }
   });
+
+  if (data.taskProgress && typeof data.taskProgress === 'object') {
+    Object.keys(data.taskProgress).forEach(taskId => {
+      const entry = data.taskProgress[taskId];
+      if (entry && typeof entry === 'object') {
+        if (typeof entry.completedAt === 'number') {
+          entry.completedAt = sanitizeTaskTimestamp(entry.completedAt, now);
+        }
+        if (typeof entry.claimedAt === 'number') {
+          entry.claimedAt = sanitizeTaskTimestamp(entry.claimedAt, now);
+        }
+      }
+    });
+  }
 
   return { data };
 }
@@ -115,12 +156,13 @@ function App() {
       try {
         tg.ready();
         tg.expand();
-        // Request official full-screen mode if available (Bot API 8.0+)
-        if (typeof tg.requestFullscreen === 'function') {
-          tg.requestFullscreen();
+        // Disable vertical swipes so scrolling inside the Mini App doesn't accidentally close it (Bot API 7.7+)
+        if (typeof tg.disableVerticalSwipes === 'function') {
+          tg.disableVerticalSwipes();
         }
-        // Set header color to match app theme
+        // Set header and background colors to match app theme
         tg.setHeaderColor?.('#ffffff');
+        tg.setBackgroundColor?.('#F0F2F5');
         // Enable closing confirmation to prevent accidental swipes
         tg.enableClosingConfirmation?.();
       } catch (e) {
@@ -130,6 +172,32 @@ function App() {
   }, [tg]);
 
   const [activeView, setActiveView] = useState<ActiveView>('swap');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [slippage, setSlippage] = useState<number>(0.5);
+  const [deadline, setDeadline] = useState<number>(20);
+  const [isExpertMode, setIsExpertMode] = useState<boolean>(false);
+
+  // Sync native Telegram BackButton with navigation state
+  useEffect(() => {
+    if (!tg?.BackButton) return;
+    const handleBack = () => {
+      triggerHaptic('light');
+      setActiveView('swap');
+    };
+    try {
+      if (activeView !== 'swap') {
+        tg.BackButton.show();
+        tg.BackButton.onClick(handleBack);
+      } else {
+        tg.BackButton.hide();
+      }
+    } catch (e) {}
+    return () => {
+      try {
+        tg.BackButton.offClick(handleBack);
+      } catch (e) {}
+    };
+  }, [activeView, tg]);
   
   const [fromToken, setFromToken] = useState<Token>(TOKENS[0]); // GRMF (Top)
   const [toToken, setToToken] = useState<Token>(TOKENS[1]); // GRAM (Bottom)
@@ -152,10 +220,11 @@ function App() {
       const cached = localStorage.getItem('grmf_cached_profile');
       if (cached) {
         const parsed = JSON.parse(cached);
+        const { data: sanitized } = normalizeAndSanitizeUserData(parsed);
         return {
-          ...parsed,
-          username: instantTgUsername || parsed.username,
-          telegramUsername: instantTgUsername || parsed.telegramUsername
+          ...sanitized,
+          username: instantTgUsername || sanitized.username,
+          telegramUsername: instantTgUsername || sanitized.telegramUsername
         };
       }
     } catch (e) {}
@@ -632,12 +701,27 @@ function App() {
           else if (fromSym === 'GRMF') setRealGrmf(newRealFrom);
 
           const taskId = (fromSym === 'GRMF' && toSym) ? `swap_grmf_${toSym.toLowerCase()}` : null;
+          const nowTs = Date.now();
+
+          const canCompleteSwapTask = (progressMap: any, id: string | null) => {
+            if (!id) return false;
+            const entry = progressMap?.[id];
+            if (!entry || typeof entry !== 'object') return true;
+            if (!entry.status) return true;
+            const lastTs = sanitizeTaskTimestamp(entry.claimedAt || entry.completedAt || 0, nowTs);
+            // Allow completing again if 24 hours have passed since last completion/claim
+            return lastTs === 0 || (nowTs - lastTs >= DAILY_TASK_COOLDOWN_MS);
+          };
 
           setUserProfile((prev: any) => {
             const prevProgress = prev?.taskProgress || {};
             const updatedProgress = { ...prevProgress };
-            if (taskId && (!updatedProgress[taskId] || !updatedProgress[taskId].status)) {
-              updatedProgress[taskId] = { status: 'completed', completedAt: Date.now() };
+            if (taskId && canCompleteSwapTask(updatedProgress, taskId)) {
+              updatedProgress[taskId] = {
+                ...(updatedProgress[taskId] || {}),
+                status: 'completed',
+                completedAt: nowTs
+              };
             }
             return {
               ...prev,
@@ -658,16 +742,13 @@ function App() {
             betaBalances: updatedBeta,
             realBalances: updatedReal,
             lastActiveAt: serverTimestamp(),
-            lastActiveTimestamp: Date.now()
+            lastActiveTimestamp: nowTs
           };
           
-          // TASK COMPLETION: If swapping GRMF to another token
-          if (taskId) {
-            const currentStatus = userProfile?.taskProgress?.[taskId]?.status;
-            if (!currentStatus) {
-              firestoreUpdate[`taskProgress.${taskId}.status`] = 'completed';
-              firestoreUpdate[`taskProgress.${taskId}.completedAt`] = Date.now();
-            }
+          // TASK COMPLETION: If swapping GRMF to another token (renews every 24h)
+          if (taskId && canCompleteSwapTask(userProfile?.taskProgress, taskId)) {
+            firestoreUpdate[`taskProgress.${taskId}.status`] = 'completed';
+            firestoreUpdate[`taskProgress.${taskId}.completedAt`] = nowTs;
           }
 
           // 2. Grant Reward & XP & Record Transaction in ONE atomic flow
@@ -815,8 +896,14 @@ function App() {
       </div>
 
       <Header 
-        onOpenWalletDrawer={() => setIsWalletOpen(true)} 
-        onOpenSettings={() => {}} 
+        onOpenWalletDrawer={() => {
+          triggerHaptic('light');
+          setIsWalletOpen(true);
+        }} 
+        onOpenSettings={() => {
+          triggerHaptic('light');
+          setIsSettingsOpen(true);
+        }} 
       />
 
       <main className={`flex-1 w-full mx-auto px-4 pt-2 pb-[calc(5.5rem+env(safe-area-inset-bottom,20px))] flex flex-col overflow-hidden relative z-10 ${
@@ -837,20 +924,34 @@ function App() {
                 fromAmount={fromAmount}
                 setFromAmount={setFromAmount}
                 toAmount={toAmount}
-                onFlipTokens={handleFlipTokens}
+                onFlipTokens={() => {
+                  triggerHaptic('light');
+                  handleFlipTokens();
+                }}
                 onOpenFromTokenSelect={() => {
+                  triggerHaptic('light');
                   setSelectingSide('from');
                   setIsTokenSelectOpen(true);
                 }}
                 onOpenToTokenSelect={() => {
+                  triggerHaptic('light');
                   setSelectingSide('to');
                   setIsTokenSelectOpen(true);
                 }}
-                onOpenSettings={() => {}}
-                onSwap={handleSwap}
+                onOpenSettings={() => {
+                  triggerHaptic('light');
+                  setIsSettingsOpen(true);
+                }}
+                onSwap={() => {
+                  triggerHaptic('medium');
+                  handleSwap();
+                }}
                 wallet={wallet}
-                onOpenConnectModal={() => setIsWalletOpen(true)}
-                slippage={0.5}
+                onOpenConnectModal={() => {
+                  triggerHaptic('light');
+                  setIsWalletOpen(true);
+                }}
+                slippage={slippage}
               />
             </motion.div>
           )}
@@ -867,7 +968,18 @@ function App() {
           )}
           {activeView === 'tasks' && (
             <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-              <TasksView key="tasks" userProfile={userProfile} setActiveView={setActiveView} />
+              <TasksView 
+                key="tasks" 
+                userProfile={userProfile} 
+                setActiveView={setActiveView}
+                onSelectSwapPair={(toSymbol: string) => {
+                  const grmfToken = TOKENS.find(t => t.symbol === 'GRMF') || TOKENS[0];
+                  const targetToken = TOKENS.find(t => t.symbol.toUpperCase() === toSymbol.toUpperCase());
+                  if (grmfToken) setFromToken(grmfToken);
+                  if (targetToken) setToToken(targetToken);
+                  setActiveView('swap');
+                }}
+              />
             </div>
           )}
           {activeView === 'airdrop' && (
@@ -899,49 +1011,47 @@ function App() {
           )}
           {activeView === 'presale' && (
             <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-              <PresaleHub key="presale" />
+              <PresaleHub key="presale" userProfile={userProfile} />
             </div>
           )}
         </AnimatePresence>
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-slate-200 px-1 sm:px-4 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom,12px))] z-50 shadow-lg ring-1 ring-slate-900/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between gap-0">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-200/80 px-2 sm:px-4 pt-1 pb-[calc(0.35rem+env(safe-area-inset-bottom,10px))] z-50">
+        <div className="max-w-xl mx-auto grid grid-cols-6 items-center gap-0.5">
           <NavButton 
             active={activeView === 'swap'} 
-            onClick={() => setActiveView('swap')} 
+            onClick={() => { triggerHaptic('light'); setActiveView('swap'); }} 
             icon={<ArrowLeftRight className="w-5 h-5" />} 
             label="Swap" 
-            badge="Beta"
           />
           <NavButton 
             active={activeView === 'tasks'} 
-            onClick={() => setActiveView('tasks')} 
+            onClick={() => { triggerHaptic('light'); setActiveView('tasks'); }} 
             icon={<ListTodo className="w-5 h-5" />} 
             label="Tasks" 
           />
           <NavButton 
             active={activeView === 'referrals'} 
-            onClick={() => setActiveView('referrals')} 
+            onClick={() => { triggerHaptic('light'); setActiveView('referrals'); }} 
             icon={<Users className="w-5 h-5" />} 
             label="Friends" 
           />
           <NavButton 
             active={activeView === 'airdrop'} 
-            onClick={() => setActiveView('airdrop')} 
+            onClick={() => { triggerHaptic('light'); setActiveView('airdrop'); }} 
             icon={<Trophy className="w-5 h-5" />} 
             label="Airdrop" 
           />
           <NavButton 
             active={activeView === 'presale'} 
-            onClick={() => setActiveView('presale')} 
+            onClick={() => { triggerHaptic('light'); setActiveView('presale'); }} 
             icon={<Rocket className="w-5 h-5" />} 
             label="Presale" 
-            badge="Sale"
           />
           <NavButton 
             active={activeView === 'profile'} 
-            onClick={() => setActiveView('profile')} 
+            onClick={() => { triggerHaptic('light'); setActiveView('profile'); }} 
             icon={<User className="w-5 h-5" />} 
             label="Profile" 
           />
@@ -955,26 +1065,28 @@ function App() {
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              className="w-full max-w-[280px] bg-white rounded-3xl p-5 text-center shadow-2xl relative overflow-hidden"
+              className="w-full max-w-[290px] bg-white rounded-3xl p-6 text-center shadow-2xl border border-slate-100"
             >
-              <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-600" />
               <div className="flex flex-col items-center">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-50 to-indigo-50 mb-3 flex items-center justify-center">
-                  <Gift className="w-7 h-7 text-blue-600" />
+                <div className="w-14 h-14 rounded-2xl bg-sky-50 mb-3.5 flex items-center justify-center">
+                  <Gift className="w-7 h-7 text-[#0088CC]" />
                 </div>
-                <h3 className="text-lg font-black text-slate-900 mb-1">Welcome Gift</h3>
+                <h3 className="text-lg font-extrabold text-slate-900 mb-1">Welcome Bonus</h3>
                 <p className="text-xs text-slate-500 mb-4 font-medium leading-relaxed">
-                  Glad to have you! Here is your starter bonus.
+                  Claim your starter allocation to begin swapping and earning on GRMF Fi.
                 </p>
-                <div className="bg-slate-50 rounded-2xl py-3 px-4 w-full mb-4 border border-slate-100 flex items-center justify-center gap-1.5">
-                  <span className="text-2xl font-black text-slate-900">{WELCOME_REWARD.toLocaleString()}</span>
-                  <span className="text-xs font-black text-blue-600 mt-1">GRMF</span>
+                <div className="bg-slate-50 rounded-2xl py-3.5 px-4 w-full mb-5 border border-slate-200/60 flex items-baseline justify-center gap-1.5">
+                  <span className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">+{WELCOME_REWARD.toLocaleString()}</span>
+                  <span className="text-xs font-extrabold text-[#0088CC]">GRMF</span>
                 </div>
                 <button
-                  onClick={collectWelcomeBonus}
-                  className="w-full py-3.5 rounded-2xl bg-slate-900 text-white font-bold text-xs shadow-md active:scale-95 transition-all"
+                  onClick={() => {
+                    triggerHaptic('success');
+                    collectWelcomeBonus();
+                  }}
+                  className="w-full min-h-[44px] py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm active:scale-95 transition-all cursor-pointer"
                 >
-                  Claim Gift
+                  Claim Starter Gift
                 </button>
               </div>
             </motion.div>
@@ -983,73 +1095,63 @@ function App() {
 
         {/* Referral Reward Modal Banner for Referred User */}
         {referralBonusModal?.show && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md">
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              initial={{ opacity: 0, scale: 0.92, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="w-full max-w-sm bg-white rounded-[40px] p-6 text-center shadow-2xl relative overflow-hidden border border-slate-100"
+              exit={{ opacity: 0, scale: 0.92, y: 16 }}
+              className="w-full max-w-xs bg-white rounded-3xl p-6 text-center shadow-2xl border border-slate-100"
             >
-              <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-amber-50 via-amber-50/50 to-transparent -z-0" />
-
-              <div className="relative z-10 flex flex-col items-center">
-                <div className="w-20 h-20 rounded-[28px] bg-gradient-to-tr from-amber-400 via-amber-500 to-yellow-600 mb-4 flex items-center justify-center shadow-xl shadow-amber-500/30 transform -rotate-3">
-                  <div className="relative">
-                    <Trophy className="w-10 h-10 text-white fill-white/20" />
-                    <motion.div
-                      animate={{ scale: [1, 1.25, 1], rotate: [0, 15, -15, 0] }}
-                      transition={{ repeat: Infinity, duration: 2.5 }}
-                      className="absolute -top-2 -right-2 w-7 h-7 bg-emerald-500 rounded-full flex items-center justify-center border-2 border-white shadow-sm"
-                    >
-                      <Sparkles className="w-4 h-4 text-white" />
-                    </motion.div>
-                  </div>
+              <div className="flex flex-col items-center">
+                <div className="w-16 h-16 rounded-2xl bg-amber-50 mb-4 flex items-center justify-center">
+                  <Trophy className="w-8 h-8 text-amber-500" />
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100/80 border border-amber-200 rounded-full text-amber-800 text-[10px] font-black uppercase tracking-wider mb-2">
-                  <UserCheck className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Referral Bonus Unlocked</span>
-                </div>
-
-                <h3 className="text-2xl font-black text-slate-900 tracking-tight leading-tight mb-2">
-                  🎉 Referral Bonus!
+                <h3 className="text-xl font-extrabold text-slate-900 tracking-tight mb-1.5">
+                  Referral Bonus Unlocked
                 </h3>
                 
-                <p className="text-xs text-slate-600 font-medium px-2 mb-5 leading-relaxed">
-                  You joined successfully via referral link from <strong className="text-slate-900 font-bold">@{referralBonusModal.referrerName}</strong>!
+                <p className="text-xs text-slate-500 font-medium mb-5 leading-relaxed">
+                  You joined via invite from <strong className="text-slate-900 font-bold">@{referralBonusModal.referrerName}</strong>
                 </p>
 
-                <div className="w-full bg-gradient-to-br from-slate-50 to-amber-50/40 border border-amber-200/60 p-5 rounded-[28px] mb-6 relative">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                    Bonus Received
+                <div className="w-full bg-slate-50 border border-slate-200/70 p-4 rounded-2xl mb-5">
+                  <span className="text-[11px] font-semibold text-slate-400 block mb-1">
+                    Bonus Credited
                   </span>
-                  <div className="flex items-baseline justify-center gap-1.5">
-                    <span className="text-4xl font-black text-slate-900 tracking-tighter">
+                  <div className="flex items-baseline justify-center gap-1.5 font-mono tabular-nums">
+                    <span className="text-3xl font-extrabold text-slate-900">
                       +{referralBonusModal.reward}
                     </span>
-                    <span className="text-base font-black text-amber-600 uppercase">GRMF</span>
+                    <span className="text-sm font-bold text-amber-600">GRMF</span>
                   </div>
-                  {referralBonusModal.isPremium && (
-                    <span className="mt-1 inline-block text-[9px] font-black text-amber-700 bg-amber-200/60 px-2 py-0.5 rounded-md uppercase">
-                      ⭐ Telegram Premium Bonus
-                    </span>
-                  )}
-                  <span className="text-[10px] text-emerald-600 font-bold block mt-2">
-                    ✓ Reward added to your balance successfully!
-                  </span>
                 </div>
 
                 <button
-                  onClick={dismissReferralModal}
-                  className="w-full py-4 rounded-[22px] bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-white font-black uppercase tracking-widest text-xs shadow-xl shadow-amber-500/25 transition-all active:scale-[0.96]"
+                  onClick={() => {
+                    triggerHaptic('success');
+                    dismissReferralModal();
+                  }}
+                  className="w-full min-h-[44px] py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer"
                 >
-                  Claim & Continue 🚀
+                  Continue
                 </button>
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        slippage={slippage}
+        setSlippage={setSlippage}
+        deadline={deadline}
+        setDeadline={setDeadline}
+        isExpertMode={isExpertMode}
+        setIsExpertMode={setIsExpertMode}
+      />
 
       <WalletDrawer 
         isOpen={isWalletOpen} 
@@ -1062,6 +1164,10 @@ function App() {
         isOpen={txState !== 'idle'} 
         txState={txState} 
         txHash={txHash}
+        fromAmount={fromAmount || '0'}
+        fromSymbol={fromToken.symbol}
+        toAmount={toAmount || '0'}
+        toSymbol={toToken.symbol}
         onClose={() => setTxState('idle')}
       />
 
@@ -1076,34 +1182,19 @@ function App() {
   );
 }
 
-const NavButton = ({ active, onClick, icon, label, badge }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, badge?: string }) => (
+const NavButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
   <button 
     onClick={onClick}
-    className={`flex-1 flex flex-col items-center gap-1 transition-all relative py-0.5 px-0.5 ${active ? 'text-[#24A1DE]' : 'text-slate-400 hover:text-slate-600'}`}
+    className={`min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
+      active ? 'text-[#0088CC]' : 'text-slate-400 hover:text-slate-700'
+    }`}
   >
-    {badge && (
-      <span className="absolute -top-1 right-0 sm:right-1 bg-[#24A1DE] text-white text-[7px] font-black px-1 py-0.2 rounded-full border border-white shadow-xs z-10 animate-pulse">
-        {badge}
-      </span>
-    )}
-    {active && (
-      <motion.div 
-        layoutId="nav-glow"
-        className="absolute -top-2 w-8 h-5 bg-blue-500/10 blur-md rounded-full"
-      />
-    )}
-    <div className={`p-1.5 sm:p-2 rounded-xl transition-all ${active ? 'bg-blue-50/80 scale-105' : ''}`}>
-      {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-4 h-4 sm:w-5 sm:h-5', strokeWidth: active ? 2.5 : 2 })}
+    <div className={`px-3 py-1 rounded-xl transition-colors ${active ? 'bg-sky-50' : ''}`}>
+      {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-5 h-5', strokeWidth: active ? 2.4 : 1.9 })}
     </div>
-    <span className={`text-[9px] sm:text-[10px] font-black uppercase tracking-tight ${active ? 'opacity-100' : 'opacity-60'} transition-all truncate max-w-full`}>
+    <span className={`text-[10px] tracking-tight whitespace-nowrap leading-none ${active ? 'font-bold text-[#0088CC]' : 'font-semibold text-slate-500'}`}>
       {label}
     </span>
-    {active && (
-      <motion.div 
-        layoutId="nav-dot"
-        className="w-1 h-1 bg-[#24A1DE] rounded-full mt-0.5"
-      />
-    )}
   </button>
 );
 
