@@ -52,7 +52,7 @@ import { TokenSelectModal } from './components/TokenSelectModal';
 import { AdminView } from './components/AdminView';
 import { PresaleHub } from './components/PresaleHub';
 import { SettingsModal } from './components/SettingsModal';
-import { triggerHaptic } from './lib/telegram';
+import { triggerHaptic, initTelegramFullScreen, getTelegramUser } from './lib/telegram';
 import { Users, ShieldAlert, Gift, Rocket } from 'lucide-react';
 
 import { TOKENS, POOLS } from './data/tokens';
@@ -148,28 +148,12 @@ function App() {
   const processedDailyBonusRef = useRef<Set<string>>(new Set());
   // Initialize Telegram WebApp data immediately
   const tg = (window as any).Telegram?.WebApp;
-  const tgUser = tg?.initDataUnsafe?.user;
+  const tgUser = getTelegramUser();
   
-  // Professional initialization
+  // Official Telegram Mini App Fullscreen initialization
   useEffect(() => {
-    if (tg) {
-      try {
-        tg.ready();
-        tg.expand();
-        // Disable vertical swipes so scrolling inside the Mini App doesn't accidentally close it (Bot API 7.7+)
-        if (typeof tg.disableVerticalSwipes === 'function') {
-          tg.disableVerticalSwipes();
-        }
-        // Set header and background colors to match app theme
-        tg.setHeaderColor?.('#ffffff');
-        tg.setBackgroundColor?.('#F0F2F5');
-        // Enable closing confirmation to prevent accidental swipes
-        tg.enableClosingConfirmation?.();
-      } catch (e) {
-        console.warn("Telegram WebApp initialization error:", e);
-      }
-    }
-  }, [tg]);
+    initTelegramFullScreen();
+  }, []);
 
   const [activeView, setActiveView] = useState<ActiveView>('swap');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -384,16 +368,26 @@ function App() {
             syncReferralsForUser(userDocId, data);
           } else {
             // Create initial profile with Telegram data using persistent userDocId
-            const finalUsername = detectedUsername || ('user_' + userDocId.slice(-6));
+            const tgFullName = tgUser?.first_name
+              ? `${tgUser.first_name}${tgUser.last_name ? ' ' + tgUser.last_name : ''}`.trim()
+              : null;
+            const finalUsername = tgUser?.username || tgFullName || detectedUsername || ('user_' + userDocId.slice(-6));
             const initialData = {
               username: finalUsername,
-              telegramUsername: detectedUsername || null,
-              telegramId: tgUser?.id || null,
+              telegramUsername: tgUser?.username || null,
+              firstName: tgUser?.first_name || null,
+              lastName: tgUser?.last_name || null,
+              fullName: tgFullName || null,
+              telegramId: tgUser?.id ? Number(tgUser.id) : null,
               photoUrl: tgUser?.photo_url || null,
+              isPremium: Boolean(tgUser?.is_premium),
+              languageCode: tgUser?.language_code || null,
               points: 0,
               rank: 0,
               inviteCount: 0,
+              referralsCount: 0,
               createdAt: serverTimestamp(),
+              createdTimestamp: Date.now(),
               lastActiveAt: serverTimestamp(),
               lastActiveTimestamp: Date.now(),
               betaBalances: { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 },
@@ -515,23 +509,32 @@ function App() {
       });
     }
 
-    // 2. Telegram Profile Sync (Only if changed)
+    // 2. Telegram Profile Sync (Ensure real Telegram username, name, ID, and photo are always synced)
     const tgUsernameClean = tgUser?.username || null;
     const tgFirstNameClean = tgUser?.first_name || null;
-    const tgIdClean = tgUser?.id || null;
+    const tgLastNameClean = tgUser?.last_name || null;
+    const tgFullNameClean = tgFirstNameClean ? `${tgFirstNameClean}${tgLastNameClean ? ' ' + tgLastNameClean : ''}`.trim() : null;
+    const tgIdClean = tgUser?.id ? Number(tgUser.id) : null;
+    const tgPhotoClean = tgUser?.photo_url || null;
 
     if (tgUser && (
       (tgUsernameClean && data.telegramUsername !== tgUsernameClean) ||
       (tgFirstNameClean && data.firstName !== tgFirstNameClean) ||
-      (tgIdClean && data.telegramId !== tgIdClean)
+      (tgLastNameClean && data.lastName !== tgLastNameClean) ||
+      (tgIdClean && Number(data.telegramId) !== tgIdClean) ||
+      (tgPhotoClean && data.photoUrl !== tgPhotoClean)
     )) {
-      const syncKey = `tg_sync_${userDocId}_${tgUsernameClean || ''}_${tgIdClean || ''}`;
+      const syncKey = `tg_sync_${userDocId}_${tgUsernameClean || ''}_${tgFirstNameClean || ''}_${tgIdClean || ''}`;
       if (!processedDailyBonusRef.current.has(syncKey)) {
         processedDailyBonusRef.current.add(syncKey);
         updateDoc(userRef, {
-          ...(tgUsernameClean ? { username: tgUsernameClean, telegramUsername: tgUsernameClean } : {}),
+          ...(tgUsernameClean ? { username: tgUsernameClean, telegramUsername: tgUsernameClean } : tgFullNameClean ? { username: tgFullNameClean } : {}),
           ...(tgFirstNameClean ? { firstName: tgFirstNameClean } : {}),
+          ...(tgLastNameClean ? { lastName: tgLastNameClean } : {}),
+          ...(tgFullNameClean ? { fullName: tgFullNameClean } : {}),
           ...(tgIdClean ? { telegramId: tgIdClean } : {}),
+          ...(tgPhotoClean ? { photoUrl: tgPhotoClean } : {}),
+          isPremium: Boolean(tgUser.is_premium),
           lastActiveAt: serverTimestamp(),
           lastActiveTimestamp: now
         }).catch(err => console.warn("TG sync failed:", err));
@@ -888,7 +891,7 @@ function App() {
   }
 
   return (
-    <div className="h-[100dvh] bg-[#F0F2F5] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden relative pt-[env(safe-area-inset-top,8px)]">
+    <div className="h-[100dvh] bg-[#F8FAFC] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden relative pt-[var(--app-safe-top,env(safe-area-inset-top,8px))]">
       {/* Dynamic Background Accents */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[70%] h-[50%] bg-blue-100/40 rounded-full blur-[120px] animate-pulse" />

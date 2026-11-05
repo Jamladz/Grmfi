@@ -14,6 +14,23 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function () {
+        try {
+          var tg = window.Telegram && window.Telegram.WebApp;
+          if (tg) {
+            tg.ready();
+            if (typeof tg.expand === 'function') tg.expand();
+            if (typeof tg.requestFullscreen === 'function' && !tg.isFullscreen) {
+              try { tg.requestFullscreen(); } catch (e) {}
+            } else if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+              try { window.TelegramWebviewProxy.postEvent('web_app_request_fullscreen', JSON.stringify({})); } catch (e) {}
+            }
+            if (typeof tg.disableVerticalSwipes === 'function') tg.disableVerticalSwipes();
+          }
+        } catch (err) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

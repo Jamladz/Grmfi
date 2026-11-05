@@ -1,380 +1,784 @@
-import React, { useEffect, useState } from 'react';
-import { collection, getDocs, query, orderBy, limit, updateDoc, doc, getCountFromServer, where, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import React, { useEffect, useState, useMemo } from 'react';
+import {
+  collection,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+  updateDoc,
+  doc,
+  getCountFromServer,
+  setDoc,
+  serverTimestamp,
+  onSnapshot
+} from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Users, Search, RefreshCw, Activity, DollarSign, UserPlus, CheckCircle, XCircle, TrendingUp } from 'lucide-react';
+import { openTelegramLink, triggerHaptic } from '../lib/telegram';
+import {
+  Users,
+  Search,
+  RefreshCw,
+  Activity,
+  DollarSign,
+  UserPlus,
+  CheckCircle,
+  XCircle,
+  TrendingUp,
+  ExternalLink,
+  ShieldCheck,
+  Clock
+} from 'lucide-react';
+
+interface NormalizedAdminUser {
+  id: string;
+  telegramId: string | null;
+  displayName: string;
+  telegramHandle: string | null;
+  photoUrl: string | null;
+  isPremium: boolean;
+  isTelegramVerified: boolean;
+  grmfBalance: number;
+  referralsCount: number;
+  xp: number;
+  lastActiveTimestamp: number;
+  createdTimestamp: number;
+  raw: any;
+}
+
+function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
+  const data: Record<string, any> = { ...rawData };
+
+  // Expand any dot-notated keys (e.g. "realBalances.GRMF") into nested objects
+  Object.keys(rawData || {}).forEach((key) => {
+    if (key.includes('.')) {
+      const parts = key.split('.');
+      let curr = data;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        if (!curr[p] || typeof curr[p] !== 'object') {
+          curr[p] = {};
+        } else {
+          curr[p] = { ...curr[p] };
+        }
+        curr = curr[p];
+      }
+      const last = parts[parts.length - 1];
+      const val = rawData[key];
+      if (typeof val === 'number' && typeof curr[last] === 'number') {
+        curr[last] = Math.max(curr[last], val);
+      } else if (curr[last] === undefined || curr[last] === null) {
+        curr[last] = val;
+      }
+    }
+  });
+
+  // Extract Telegram ID from field or from document ID "tg_123456789"
+  let tgIdStr: string | null = null;
+  if (data.telegramId !== undefined && data.telegramId !== null && String(data.telegramId).trim() !== '') {
+    tgIdStr = String(data.telegramId).trim();
+  } else if (docId.startsWith('tg_')) {
+    const extracted = docId.replace(/^tg_/, '').trim();
+    if (/^\d+$/.test(extracted)) {
+      tgIdStr = extracted;
+    }
+  }
+
+  // Clean username / handle
+  const rawTgUsername = typeof data.telegramUsername === 'string' ? data.telegramUsername.replace(/^@/, '').trim() : '';
+  const rawUsername = typeof data.username === 'string' ? data.username.replace(/^@/, '').trim() : '';
+  const isGeneratedPlaceholder = (name: string) =>
+    !name ||
+    /^user_[a-zA-Z0-9_-]+$/i.test(name) ||
+    name.toLowerCase() === 'anonymous' ||
+    name.toLowerCase() === 'user' ||
+    name.toLowerCase() === 'telegram user';
+
+  const firstName = typeof data.firstName === 'string' ? data.firstName.trim() : '';
+  const lastName = typeof data.lastName === 'string' ? data.lastName.trim() : '';
+  const fullName = typeof data.fullName === 'string' && data.fullName.trim()
+    ? data.fullName.trim()
+    : `${firstName} ${lastName}`.trim();
+
+  // Determine real Telegram @handle (if it looks like a valid handle without spaces and not a placeholder)
+  let telegramHandle: string | null = null;
+  if (rawTgUsername && !isGeneratedPlaceholder(rawTgUsername) && !rawTgUsername.includes(' ')) {
+    telegramHandle = rawTgUsername;
+  } else if (rawUsername && !isGeneratedPlaceholder(rawUsername) && !rawUsername.includes(' ')) {
+    telegramHandle = rawUsername;
+  }
+
+  // Determine best human-readable Display Name
+  let displayName = '';
+  if (fullName) {
+    displayName = fullName;
+  } else if (rawTgUsername && !isGeneratedPlaceholder(rawTgUsername)) {
+    displayName = rawTgUsername;
+  } else if (rawUsername && !isGeneratedPlaceholder(rawUsername)) {
+    displayName = rawUsername;
+  } else if (tgIdStr) {
+    displayName = `Telegram #${tgIdStr}`;
+  } else {
+    displayName = rawUsername || `User #${docId.slice(-6)}`;
+  }
+
+  const isTelegramVerified = Boolean(
+    tgIdStr ||
+    docId.startsWith('tg_') ||
+    telegramHandle ||
+    firstName
+  );
+
+  // Balances & Referrals
+  const grmfBalance = Math.max(
+    Number(data.realBalances?.GRMF) || 0,
+    Number(data.betaBalances?.GRMF) || 0,
+    Number(data['realBalances.GRMF']) || 0
+  );
+
+  const referralsArrayLen = Array.isArray(data.referrals) ? data.referrals.length : 0;
+  const referralsCount = Math.max(
+    Number(data.referralsCount) || 0,
+    Number(data.inviteCount) || 0,
+    referralsArrayLen
+  );
+
+  const xp = Number(data.xp) || Number(data.points) || 0;
+
+  // Timestamps
+  const lastActiveTimestamp =
+    Number(data.lastActiveTimestamp) ||
+    (data.lastActiveAt?.toMillis ? data.lastActiveAt.toMillis() : 0) ||
+    (data.createdAt?.toMillis ? data.createdAt.toMillis() : 0) ||
+    0;
+
+  const createdTimestamp =
+    Number(data.createdTimestamp) ||
+    (data.createdAt?.toMillis ? data.createdAt.toMillis() : 0) ||
+    lastActiveTimestamp ||
+    0;
+
+  return {
+    id: docId,
+    telegramId: tgIdStr,
+    displayName,
+    telegramHandle,
+    photoUrl: data.photoUrl || null,
+    isPremium: Boolean(data.isPremium),
+    isTelegramVerified,
+    grmfBalance,
+    referralsCount,
+    xp,
+    lastActiveTimestamp,
+    createdTimestamp,
+    raw: data
+  };
+}
+
+/**
+ * Deduplicate records that belong to the same Telegram User ID
+ * (e.g., if an earlier build created both an anonymous UID doc and a tg_ID doc for the same Telegram account)
+ */
+function deduplicateUsers(rawUsers: NormalizedAdminUser[]): NormalizedAdminUser[] {
+  const byTelegramId = new Map<string, NormalizedAdminUser>();
+  const withoutTelegramId: NormalizedAdminUser[] = [];
+
+  for (const user of rawUsers) {
+    if (!user.telegramId) {
+      withoutTelegramId.push(user);
+      continue;
+    }
+
+    const existing = byTelegramId.get(user.telegramId);
+    if (!existing) {
+      byTelegramId.set(user.telegramId, user);
+    } else {
+      // Merge the two records for the same Telegram user, preferring canonical tg_ doc ID and non-empty names
+      const preferCurrentId = user.id.startsWith('tg_') && !existing.id.startsWith('tg_');
+      const bestDisplayName =
+        !existing.displayName.startsWith('Telegram #') && !existing.displayName.startsWith('User #')
+          ? existing.displayName
+          : user.displayName;
+
+      byTelegramId.set(user.telegramId, {
+        ...existing,
+        id: preferCurrentId ? user.id : existing.id,
+        displayName: bestDisplayName,
+        telegramHandle: existing.telegramHandle || user.telegramHandle,
+        photoUrl: existing.photoUrl || user.photoUrl,
+        isPremium: existing.isPremium || user.isPremium,
+        isTelegramVerified: true,
+        grmfBalance: Math.max(existing.grmfBalance, user.grmfBalance),
+        referralsCount: Math.max(existing.referralsCount, user.referralsCount),
+        xp: Math.max(existing.xp, user.xp),
+        lastActiveTimestamp: Math.max(existing.lastActiveTimestamp, user.lastActiveTimestamp),
+        createdTimestamp: Math.min(
+          existing.createdTimestamp || Infinity,
+          user.createdTimestamp || Infinity
+        )
+      });
+    }
+  }
+
+  return [...Array.from(byTelegramId.values()), ...withoutTelegramId];
+}
 
 export const AdminView: React.FC = () => {
-  const [users, setUsers] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<NormalizedAdminUser[]>([]);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'users' | 'withdrawals'>('users');
-  const [sortBy, setSortBy] = useState<'recent' | 'referrals' | 'grmf'>('referrals');
+  const [userFilter, setUserFilter] = useState<'telegram' | 'all'>('telegram');
+  const [sortBy, setSortBy] = useState<'recent' | 'referrals' | 'grmf' | 'newest'>('recent');
+  const [visibleCount, setVisibleCount] = useState(100);
+  const [adminNotice, setAdminNotice] = useState<string | null>(null);
+
   const [stats, setStats] = useState({
-    totalUsers: 0,
-    realUsers: 0,
+    totalDocs: 0,
+    uniqueUsers: 0,
+    realTelegramUsers: 0,
     active24h: 0,
     totalReferrals: 0,
     totalGrmf: 0
   });
 
-  const fetchData = async (currentSort: string = sortBy) => {
-    setLoading(true);
+  const processUsersSnapshot = async (docs: any[], serverTotalCount?: number) => {
+    const normalized = docs.map((d) => normalizeUserDoc(d.id, d.data()));
+    const deduplicated = deduplicateUsers(normalized);
+
+    const realTgUsers = deduplicated.filter((u) => u.isTelegramVerified);
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const active24hCount = deduplicated.filter((u) => u.lastActiveTimestamp >= twentyFourHoursAgo).length;
+    const sumReferrals = deduplicated.reduce((acc, u) => acc + (u.referralsCount || 0), 0);
+    const sumGrmf = deduplicated.reduce((acc, u) => acc + (u.grmfBalance || 0), 0);
+    const exactTotalDocs = serverTotalCount ?? docs.length;
+
+    setAllUsers(deduplicated);
+    setStats({
+      totalDocs: exactTotalDocs,
+      uniqueUsers: deduplicated.length,
+      realTelegramUsers: realTgUsers.length,
+      active24h: active24hCount,
+      totalReferrals: sumReferrals,
+      totalGrmf: Math.round(sumGrmf)
+    });
+
+    // Keep global/stats document synchronized with real verified counts
     try {
-      // Fetch global stats from the summary document first (Professional approach)
       const statsRef = doc(db, 'global', 'stats');
-      const statsSnap = await getDoc(statsRef);
-      let globalStats = statsSnap.exists() ? statsSnap.data() : null;
-
-      // Fetch sample users for the list and local totals (for comparison/validation)
-      let orderField = 'lastActiveTimestamp';
-      if (currentSort === 'referrals') orderField = 'referralsCount';
-      if (currentSort === 'grmf') orderField = 'realBalances.GRMF';
-      const qUsers = query(collection(db, 'users'), orderBy(orderField, 'desc'), limit(100));
-      const snapUsers = await getDocs(qUsers);
-      const usersData = snapUsers.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      setUsers(usersData);
-
-      // If global stats don't exist, calculate them (One-time migration/init)
-      if (!globalStats || !globalStats.totalUsers) {
-        console.log("Initializing global stats via count queries...");
-        const totalUsersSnap = await getCountFromServer(collection(db, 'users'));
-        const realUsersQuery = query(collection(db, 'users'), where('telegramId', '>', 0));
-        const realUsersSnap = await getCountFromServer(realUsersQuery);
-        const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-        const active24hQuery = query(collection(db, 'users'), where('lastActiveTimestamp', '>', twentyFourHoursAgo));
-        const active24hSnap = await getCountFromServer(active24hQuery);
-
-        globalStats = {
-          totalUsers: totalUsersSnap.data().count,
-          realUsers: realUsersSnap.data().count,
-          active24h: active24hSnap.data().count,
-          totalReferrals: usersData.reduce((acc: number, u: any) => acc + (u.referralsCount || 0), 0), // Best effort init
-          totalGrmf: usersData.reduce((acc: number, u: any) => acc + (u.realBalances?.GRMF || 0), 0)    // Best effort init
-        };
-        
-        // Save initial stats if admin
-        await setDoc(statsRef, { ...globalStats, lastUpdatedAt: serverTimestamp() }, { merge: true });
-      } else {
-        // Still fetch active 24h as it's dynamic
-        const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-        const active24hQuery = query(collection(db, 'users'), where('lastActiveTimestamp', '>', twentyFourHoursAgo));
-        const active24hSnap = await getCountFromServer(active24hQuery);
-        globalStats.active24h = active24hSnap.data().count;
-      }
-
-      setStats({
-        totalUsers: globalStats.totalUsers || 0,
-        realUsers: globalStats.realUsers || 0,
-        active24h: globalStats.active24h || 0,
-        totalReferrals: globalStats.totalReferrals || 0,
-        totalGrmf: globalStats.totalGrmf || 0
-      });
-
-      const qWithdraw = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'), limit(50));
-      const snapWithdraw = await getDocs(qWithdraw);
-      setWithdrawals(snapWithdraw.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      await setDoc(
+        statsRef,
+        {
+          totalUsers: exactTotalDocs,
+          uniqueUsers: deduplicated.length,
+          realUsers: realTgUsers.length,
+          active24h: active24hCount,
+          totalReferrals: sumReferrals,
+          totalGrmf: Math.round(sumGrmf),
+          lastUpdatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
     } catch (e) {
-      console.error(e);
+      // Ignore write error if non-admin or offline
     }
-    setLoading(false);
   };
 
-  useEffect(() => {
-    fetchData(sortBy);
-  }, [sortBy]);
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // 1. Get exact server document count
+      let serverCount = 0;
+      try {
+        const countSnap = await getCountFromServer(collection(db, 'users'));
+        serverCount = countSnap.data().count;
+      } catch (e) {}
 
-  const [adminNotice, setAdminNotice] = useState<string | null>(null);
+      // 2. Fetch all user documents WITHOUT a restrictive orderBy that drops documents missing optional fields
+      const qUsers = query(collection(db, 'users'), limit(5000));
+      const snapUsers = await getDocs(qUsers);
+      await processUsersSnapshot(snapUsers.docs, serverCount || snapUsers.size);
+
+      // 3. Fetch withdrawal requests
+      const qWithdraw = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'), limit(100));
+      const snapWithdraw = await getDocs(qWithdraw);
+      setWithdrawals(snapWithdraw.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error('Admin fetchData error:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Real-time listener on users collection so new Telegram entrants appear immediately
+  useEffect(() => {
+    fetchData();
+
+    const qLive = query(collection(db, 'users'), limit(5000));
+    const unsub = onSnapshot(
+      qLive,
+      (snap) => {
+        processUsersSnapshot(snap.docs, snap.size);
+        setLoading(false);
+      },
+      (err) => {
+        console.warn('Admin live listener warning:', err);
+      }
+    );
+
+    return () => unsub();
+  }, []);
 
   const handleWithdrawalStatus = async (id: string, status: 'approved' | 'rejected') => {
+    triggerHaptic('medium');
     try {
       await updateDoc(doc(db, 'withdrawal_requests', id), { status });
-      setWithdrawals(prev => prev.map(w => w.id === id ? { ...w, status } : w));
+      setWithdrawals((prev) => prev.map((w) => (w.id === id ? { ...w, status } : w)));
     } catch (e) {
       console.error(e);
-      setAdminNotice('Failed to update status. Only admins can do this.');
+      setAdminNotice('Failed to update status. Only admins can perform this action.');
       setTimeout(() => setAdminNotice(null), 3500);
     }
   };
 
-  const filteredUsers = users.filter(u => 
-    u.telegramId && (
-      u.id.includes(search) || 
-      u.username?.toLowerCase().includes(search.toLowerCase()) || 
-      u.telegramUsername?.toLowerCase().includes(search.toLowerCase()) ||
-      u.firstName?.toLowerCase().includes(search.toLowerCase()) ||
-      u.telegramId?.toString().includes(search)
-    )
-  );
+  // Filter and sort users client-side so zero users are ever dropped
+  const filteredAndSortedUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    const baseList =
+      userFilter === 'telegram'
+        ? allUsers.filter((u) => u.isTelegramVerified)
+        : allUsers;
+
+    const searched = q
+      ? baseList.filter(
+          (u) =>
+            u.displayName.toLowerCase().includes(q) ||
+            (u.telegramHandle && u.telegramHandle.toLowerCase().includes(q)) ||
+            (u.telegramId && u.telegramId.includes(q)) ||
+            u.id.toLowerCase().includes(q)
+        )
+      : baseList;
+
+    return [...searched].sort((a, b) => {
+      if (sortBy === 'referrals') {
+        if (b.referralsCount !== a.referralsCount) return b.referralsCount - a.referralsCount;
+        return b.grmfBalance - a.grmfBalance;
+      }
+      if (sortBy === 'grmf') {
+        if (b.grmfBalance !== a.grmfBalance) return b.grmfBalance - a.grmfBalance;
+        return b.referralsCount - a.referralsCount;
+      }
+      if (sortBy === 'newest') {
+        return (b.createdTimestamp || 0) - (a.createdTimestamp || 0);
+      }
+      // Default: 'recent' (Last Active)
+      return (b.lastActiveTimestamp || 0) - (a.lastActiveTimestamp || 0);
+    });
+  }, [allUsers, userFilter, search, sortBy]);
+
+  const displayedUsers = filteredAndSortedUsers.slice(0, visibleCount);
 
   const formatLastActive = (timestamp: number) => {
-    if (!timestamp) return 'Never';
+    if (!timestamp) return 'New';
     const diff = Date.now() - timestamp;
+    if (diff < 0) return 'Just now';
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return 'Just now';
     if (mins < 60) return `${mins}m ago`;
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
     return new Date(timestamp).toLocaleDateString();
   };
 
   return (
-    <div className="p-4 flex flex-col gap-4 pb-20 max-w-4xl mx-auto">
+    <div className="flex flex-col gap-4 pb-16 max-w-5xl mx-auto">
       {adminNotice && (
         <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-2xl text-xs font-bold">
           {adminNotice}
         </div>
       )}
-      <div className="flex justify-between items-center bg-white p-5 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -mr-10 -mt-10" />
-        <div className="flex items-center gap-4 relative z-10">
-          <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-900/20">
-            <Activity className="w-6 h-6 text-blue-400" />
+
+      {/* Admin Header Card */}
+      <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-11 h-11 bg-slate-900 rounded-2xl flex items-center justify-center text-white shrink-0">
+            <ShieldCheck className="w-5 h-5 text-[#0088CC]" />
           </div>
           <div>
-            <h2 className="text-xl font-black text-slate-900 tracking-tight leading-tight">Admin Console</h2>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.15em]">System Live</p>
-            </div>
+            <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
+              Admin Console
+            </h2>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Live Firestore directory · Real Telegram Bot users & analytics
+            </p>
           </div>
         </div>
-        <button 
-          onClick={() => fetchData()} 
+        <button
+          onClick={() => {
+            triggerHaptic('light');
+            fetchData();
+          }}
           disabled={loading}
-          className="p-3 bg-slate-50 text-slate-600 rounded-2xl hover:bg-slate-100 active:scale-95 transition-all border border-slate-200/50 disabled:opacity-50"
+          className="min-h-[40px] px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
         >
-          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">Refresh</span>
         </button>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-        <StatCard 
-          icon={<Users className="w-4 h-4 text-blue-500" />} 
-          value={stats.realUsers.toLocaleString()} 
-          label="Real Users" 
-          color="blue"
+      {/* Live Verified KPI Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+        <StatCard
+          icon={<Users className="w-4 h-4 text-[#0088CC]" />}
+          value={stats.realTelegramUsers.toLocaleString()}
+          label="Telegram Users"
+          subLabel="Verified Bot Entrants"
         />
-        <StatCard 
-          icon={<TrendingUp className="w-4 h-4 text-slate-500" />} 
-          value={stats.totalUsers.toLocaleString()} 
-          label="Total Rows" 
-          color="slate"
+        <StatCard
+          icon={<TrendingUp className="w-4 h-4 text-slate-600" />}
+          value={stats.totalDocs.toLocaleString()}
+          label="Total Accounts"
+          subLabel={`${stats.uniqueUsers.toLocaleString()} Unique Profiles`}
         />
-        <StatCard 
-          icon={<Activity className="w-4 h-4 text-emerald-500" />} 
-          value={stats.active24h.toLocaleString()} 
-          label="Active 24h" 
-          color="emerald"
+        <StatCard
+          icon={<Activity className="w-4 h-4 text-emerald-600" />}
+          value={stats.active24h.toLocaleString()}
+          label="Active (24h)"
+          subLabel="Last 24 hours"
         />
-        <StatCard 
-          icon={<UserPlus className="w-4 h-4 text-purple-500" />} 
-          value={stats.totalReferrals.toLocaleString()} 
-          label="Referrals" 
-          color="purple"
+        <StatCard
+          icon={<UserPlus className="w-4 h-4 text-indigo-600" />}
+          value={stats.totalReferrals.toLocaleString()}
+          label="Total Referrals"
+          subLabel="Verified Invites"
         />
-        <StatCard 
-          icon={<DollarSign className="w-4 h-4 text-amber-500" />} 
-          value={stats.totalGrmf.toLocaleString()} 
-          label="Total GRMF" 
-          unit="T"
-          color="amber"
+        <StatCard
+          icon={<DollarSign className="w-4 h-4 text-amber-600" />}
+          value={stats.totalGrmf.toLocaleString()}
+          label="Distributed GRMF"
+          subLabel="Total User Holdings"
         />
       </div>
 
-      <div className="flex bg-slate-100/80 backdrop-blur-sm p-1.5 rounded-2xl border border-slate-200/50 shadow-inner">
+      {/* Primary View Switcher */}
+      <div className="flex bg-slate-200/70 p-1 rounded-2xl">
         <button
-          onClick={() => setActiveTab('users')}
-          className={`flex-1 py-3 text-[11px] font-black uppercase tracking-widest rounded-xl transition-all ${
-            activeTab === 'users' ? 'bg-white text-slate-900 shadow-md border border-slate-100' : 'text-slate-500 hover:text-slate-700'
+          onClick={() => {
+            triggerHaptic('light');
+            setActiveTab('users');
+          }}
+          className={`flex-1 min-h-[38px] py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+            activeTab === 'users'
+              ? 'bg-white text-slate-900 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Users List
+          Users Directory ({userFilter === 'telegram' ? stats.realTelegramUsers : stats.uniqueUsers})
         </button>
         <button
-          onClick={() => setActiveTab('withdrawals')}
-          className={`flex-1 py-3 text-[11px] font-black uppercase tracking-widest rounded-xl transition-all ${
-            activeTab === 'withdrawals' ? 'bg-white text-slate-900 shadow-md border border-slate-100' : 'text-slate-500 hover:text-slate-700'
+          onClick={() => {
+            triggerHaptic('light');
+            setActiveTab('withdrawals');
+          }}
+          className={`flex-1 min-h-[38px] py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+            activeTab === 'withdrawals'
+              ? 'bg-white text-slate-900 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Requests
+          Withdrawal Requests ({withdrawals.length})
         </button>
       </div>
 
       {activeTab === 'users' ? (
-        <div className="bg-white rounded-[2rem] shadow-2xl shadow-slate-200/40 border border-slate-100 overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/30">
-            <div className="flex-1 flex items-center gap-4 w-full">
-              <div className="w-10 h-10 bg-white rounded-xl border border-slate-200 flex items-center justify-center shadow-sm shrink-0">
-                <Search className="w-5 h-5 text-slate-400" />
+        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs overflow-hidden flex flex-col">
+          {/* Controls Bar */}
+          <div className="p-4 border-b border-slate-100 flex flex-col gap-3 bg-slate-50/50">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+              {/* Search Box */}
+              <div className="flex-1 flex items-center gap-2.5 bg-white border border-slate-200/80 rounded-2xl px-3.5 py-2.5">
+                <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                <input
+                  type="text"
+                  placeholder="Search by real name, @username, or Telegram ID..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="bg-transparent border-none outline-none text-xs w-full text-slate-900 font-semibold placeholder:text-slate-400"
+                />
+                {search && (
+                  <button
+                    onClick={() => setSearch('')}
+                    className="text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-              <input 
-                type="text" 
-                placeholder="Search by Name, TG Username or ID..." 
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="bg-transparent border-none outline-none text-sm w-full text-slate-700 font-bold placeholder:text-slate-400/70"
-              />
+
+              {/* Filter & Sort Controls */}
+              <div className="flex items-center gap-2">
+                <div className="flex bg-slate-200/70 p-0.5 rounded-xl">
+                  <button
+                    onClick={() => setUserFilter('telegram')}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      userFilter === 'telegram'
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Telegram ({stats.realTelegramUsers})
+                  </button>
+                  <button
+                    onClick={() => setUserFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      userFilter === 'all'
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    All ({stats.uniqueUsers})
+                  </button>
+                </div>
+
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="bg-white border border-slate-200/80 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none cursor-pointer"
+                >
+                  <option value="recent">Recently Active</option>
+                  <option value="referrals">Top Referrers</option>
+                  <option value="grmf">Top Balance</option>
+                  <option value="newest">Newest Joined</option>
+                </select>
+              </div>
             </div>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm outline-none cursor-pointer w-full sm:w-auto"
-            >
-              <option value="referrals">Top Referrers</option>
-              <option value="grmf">Top Tokens</option>
-              <option value="recent">Recently Active</option>
-            </select>
           </div>
-          
-          <div className="flex flex-col max-h-[600px] overflow-y-auto no-scrollbar">
-            <div className="bg-slate-50/80 px-6 py-3 flex items-center justify-between border-b border-slate-100">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">User Profile & Activity</span>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tokens & Refs</span>
-            </div>
-            {filteredUsers.length === 0 ? (
-              <div className="p-16 text-center flex flex-col items-center gap-4">
-                <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center border border-dashed border-slate-200">
-                  <Users className="w-8 h-8 text-slate-200" />
-                </div>
-                <div>
-                  <p className="text-sm text-slate-400 font-bold">No Users Found</p>
-                  <p className="text-[10px] text-slate-300 uppercase font-black tracking-widest mt-1">Refine your search</p>
-                </div>
+
+          {/* Column Header */}
+          <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-between border-b border-slate-100 text-[11px] font-bold text-slate-400">
+            <span>User Identity & Telegram Handle ({filteredAndSortedUsers.length})</span>
+            <span>Holdings & Referrals</span>
+          </div>
+
+          {/* Users Tap-List */}
+          <div className="divide-y divide-slate-100 max-h-[620px] overflow-y-auto no-scrollbar">
+            {loading && displayedUsers.length === 0 ? (
+              <div className="p-12 text-center text-xs font-semibold text-slate-400">
+                Loading real user directory from Firestore...
+              </div>
+            ) : displayedUsers.length === 0 ? (
+              <div className="p-12 text-center flex flex-col items-center gap-2">
+                <Users className="w-7 h-7 text-slate-300" />
+                <p className="text-sm font-bold text-slate-700">No matching users found</p>
+                <p className="text-xs text-slate-400">
+                  Try clearing your search filter or switching to "All ({stats.uniqueUsers})".
+                </p>
               </div>
             ) : (
-              filteredUsers.map((user, index) => (
-                <div key={user.id} className="px-6 py-5 border-b border-slate-50 flex items-center justify-between hover:bg-blue-50/30 transition-all group">
-                  <div className="flex items-center gap-4">
-                    <div className="relative">
-                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-sm font-black text-slate-500 border border-slate-200 group-hover:from-blue-500 group-hover:to-blue-600 group-hover:text-white group-hover:border-blue-400 transition-all shadow-sm">
-                        {user.username?.[0]?.toUpperCase() || user.firstName?.[0]?.toUpperCase() || index + 1}
-                      </div>
-                      {user.lastActiveTimestamp > Date.now() - 300000 && (
-                        <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full" />
-                      )}
-                    </div>
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-slate-900">
-                          {user.firstName || user.lastName ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : user.username || 'Telegram User'}
-                        </span>
-                        {user.isPremium && (
-                          <span className="w-3 h-3 bg-amber-400 rounded-full flex items-center justify-center text-[6px] text-white">⭐</span>
+              displayedUsers.map((user, index) => {
+                const isOnline = user.lastActiveTimestamp > Date.now() - 5 * 60 * 1000;
+                const initial = (user.displayName?.[0] || 'U').toUpperCase();
+
+                return (
+                  <div
+                    key={user.id}
+                    className="p-4 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      {/* Rank & Avatar */}
+                      <span className="w-6 text-xs font-mono tabular-nums font-bold text-slate-400 shrink-0 text-center">
+                        {index + 1}
+                      </span>
+
+                      <div className="relative shrink-0">
+                        {user.photoUrl ? (
+                          <img
+                            src={user.photoUrl}
+                            alt={user.displayName}
+                            className="w-10 h-10 rounded-2xl object-cover border border-slate-200/80"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-700 font-extrabold text-sm flex items-center justify-center border border-slate-200/60">
+                            {initial}
+                          </div>
+                        )}
+                        {isOnline && (
+                          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full" />
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-bold text-blue-600">
-                          @{user.telegramUsername || user.username || 'Anonymous'}
-                        </span>
-                        <span className="text-[9px] text-slate-400 font-bold px-1.5 py-0.5 bg-slate-100 rounded-md">
-                          {formatLastActive(user.lastActiveTimestamp)}
-                        </span>
+
+                      {/* Identity Details */}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-bold text-slate-900 truncate">
+                            {user.displayName}
+                          </span>
+                          {user.isPremium && (
+                            <span className="text-[10px] font-bold text-amber-600" title="Telegram Premium">
+                              ★
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-xs text-slate-500 font-medium mt-0.5">
+                          {user.telegramHandle ? (
+                            <button
+                              onClick={() => openTelegramLink(`https://t.me/${user.telegramHandle}`)}
+                              className="text-[#0088CC] hover:underline font-bold inline-flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <span>@{user.telegramHandle}</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </button>
+                          ) : (
+                            <span className="text-slate-400">No @username</span>
+                          )}
+
+                          {user.telegramId && (
+                            <>
+                              <span className="text-slate-300">·</span>
+                              <span className="font-mono tabular-nums text-[11px] text-slate-500">
+                                ID: {user.telegramId}
+                              </span>
+                            </>
+                          )}
+
+                          <span className="text-slate-300">·</span>
+                          <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 font-mono tabular-nums">
+                            <Clock className="w-3 h-3" />
+                            {formatLastActive(user.lastActiveTimestamp)}
+                          </span>
+                        </div>
                       </div>
-                      <span className="text-[8px] text-slate-300 font-mono tracking-tight mt-1 truncate max-w-[120px]">{user.id}</span>
+                    </div>
+
+                    {/* Right Metrics */}
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-extrabold font-mono tabular-nums text-slate-900">
+                        {user.grmfBalance.toLocaleString()}{' '}
+                        <span className="text-[11px] text-[#0088CC]">GRMF</span>
+                      </div>
+                      <div className="text-xs text-slate-500 font-medium mt-0.5 font-mono tabular-nums">
+                        <span className="font-bold text-emerald-600">{user.referralsCount}</span> Refs
+                        <span className="mx-1.5 text-slate-300">·</span>
+                        <span>{user.xp} XP</span>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1.5">
-                    <div className="flex items-baseline gap-1 bg-blue-50 px-3 py-1 rounded-xl border border-blue-100 group-hover:bg-blue-100 transition-colors">
-                      <span className="text-sm font-black text-blue-700">{(user.realBalances?.GRMF || 0).toLocaleString()}</span>
-                      <span className="text-[8px] font-black text-blue-400 uppercase">GRMF</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1">
-                        <UserPlus className="w-3 h-3 text-emerald-500" />
-                        <span className="text-[10px] text-slate-500 font-bold">{user.referralsCount || 0} Refs</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Activity className="w-2.5 h-2.5 text-slate-400" />
-                        <span className="text-[10px] text-slate-500 font-bold">{user.xp || 0} XP</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
+
+          {/* Load More Pagination */}
+          {filteredAndSortedUsers.length > visibleCount && (
+            <div className="p-3.5 border-t border-slate-100 bg-slate-50/50 text-center">
+              <button
+                onClick={() => setVisibleCount((prev) => prev + 100)}
+                className="min-h-[38px] px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer active:scale-95"
+              >
+                Show More Users ({filteredAndSortedUsers.length - visibleCount} remaining)
+              </button>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="bg-white rounded-[2rem] shadow-2xl shadow-slate-200/40 border border-slate-100 overflow-hidden flex flex-col">
-          <div className="flex flex-col max-h-[600px] overflow-y-auto no-scrollbar">
-            {withdrawals.length === 0 ? (
-              <div className="p-20 text-center flex flex-col items-center gap-4">
-                <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center border border-dashed border-slate-200">
-                  <DollarSign className="w-8 h-8 text-slate-200" />
-                </div>
-                <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">No Pending Requests</p>
-              </div>
-            ) : (
-              withdrawals.map(w => (
-                <div key={w.id} className="p-6 border-b border-slate-50 flex flex-col gap-4 hover:bg-slate-50/50 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center border border-amber-100 text-amber-600">
-                        <DollarSign className="w-6 h-6" />
-                      </div>
-                      <div className="flex flex-col">
-                        <div className="flex items-baseline gap-1.5">
-                          <span className="text-lg font-black text-slate-900">{w.amount}</span>
-                          <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{w.currency}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-bold mt-0.5">ID: {w.userId}</span>
-                      </div>
+        /* Withdrawal Requests Tab */
+        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs overflow-hidden divide-y divide-slate-100">
+          {withdrawals.length === 0 ? (
+            <div className="p-14 text-center flex flex-col items-center gap-2">
+              <DollarSign className="w-7 h-7 text-slate-300" />
+              <p className="text-sm font-bold text-slate-700">No Pending Withdrawal Requests</p>
+            </div>
+          ) : (
+            withdrawals.map((w) => (
+              <div key={w.id} className="p-5 flex flex-col gap-3.5 hover:bg-slate-50/50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
+                      <span className="text-lg font-extrabold text-slate-900">{w.amount}</span>
+                      <span className="text-xs font-bold text-[#0088CC] uppercase">{w.currency}</span>
                     </div>
-                    <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-xl border-2 ${
-                      w.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-100 animate-pulse' :
-                      w.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                      'bg-red-50 text-red-700 border-red-100'
-                    }`}>
-                      {w.status}
+                    <span className="text-xs text-slate-500 font-mono tabular-nums mt-0.5 block">
+                      User ID: {w.userId}
                     </span>
                   </div>
-                  
-                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/50 flex flex-col gap-1.5">
-                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Withdrawal Address</span>
-                    <span className="text-[11px] font-mono font-bold text-slate-600 break-all leading-relaxed">{w.recipientAddress}</span>
-                  </div>
-
-                  {w.status === 'pending' && (
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={() => handleWithdrawalStatus(w.id, 'approved')}
-                        className="flex-1 py-3.5 bg-emerald-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.1em] flex items-center justify-center gap-2 hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
-                      >
-                        <CheckCircle className="w-4 h-4" /> Approve
-                      </button>
-                      <button 
-                        onClick={() => handleWithdrawalStatus(w.id, 'rejected')}
-                        className="flex-1 py-3.5 bg-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.1em] flex items-center justify-center gap-2 hover:bg-slate-800 shadow-lg shadow-slate-900/20 active:scale-95 transition-all"
-                      >
-                        <XCircle className="w-4 h-4" /> Reject
-                      </button>
-                    </div>
-                  )}
+                  <span
+                    className={`text-xs font-bold capitalize px-3 py-1 rounded-xl ${
+                      w.status === 'pending'
+                        ? 'bg-amber-50 text-amber-700'
+                        : w.status === 'approved'
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-rose-50 text-rose-700'
+                    }`}
+                  >
+                    {w.status}
+                  </span>
                 </div>
-              ))
-            )}
-          </div>
+
+                <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/60">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                    TON Recipient Address
+                  </span>
+                  <span className="text-xs font-mono font-semibold text-slate-700 break-all">
+                    {w.recipientAddress}
+                  </span>
+                </div>
+
+                {w.status === 'pending' && (
+                  <div className="flex gap-2.5">
+                    <button
+                      onClick={() => handleWithdrawalStatus(w.id, 'approved')}
+                      className="flex-1 min-h-[42px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <CheckCircle className="w-4 h-4" /> Approve
+                    </button>
+                    <button
+                      onClick={() => handleWithdrawalStatus(w.id, 'rejected')}
+                      className="flex-1 min-h-[42px] bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <XCircle className="w-4 h-4" /> Reject
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
   );
 };
 
-const StatCard = ({ icon, value, label, unit, subLabel, color }: { icon: React.ReactNode, value: string, label: string, unit?: string, subLabel?: string, color: string }) => (
-  <div className="bg-white p-4 rounded-[1.75rem] shadow-xl shadow-slate-200/40 border border-slate-100 flex flex-col gap-1.5 relative overflow-hidden group hover:-translate-y-1 transition-all duration-300">
-    <div className={`absolute -top-6 -right-6 w-16 h-16 bg-${color}-500/5 rounded-full blur-2xl group-hover:scale-150 transition-transform`} />
-    <div className="flex items-center gap-2.5 relative z-10">
-      <div className={`p-2 bg-${color}-50 rounded-xl border border-${color}-100 group-hover:scale-110 transition-transform`}>
-        {React.cloneElement(icon as React.ReactElement<any>, { className: `w-4 h-4 text-${color}-600` })}
+const StatCard = ({
+  icon,
+  value,
+  label,
+  subLabel
+}: {
+  icon: React.ReactNode;
+  value: string;
+  label: string;
+  subLabel?: string;
+}) => (
+  <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col justify-between gap-2">
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs font-semibold text-slate-500 truncate">{label}</span>
+      <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200/60 flex items-center justify-center shrink-0">
+        {icon}
       </div>
-      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider">{label}</span>
     </div>
-    <div className="flex items-baseline gap-1 mt-1 relative z-10">
-      <span className="text-xl font-black text-slate-900 tracking-tight">{value}</span>
-      {unit && <span className={`text-[10px] font-black text-${color}-500 uppercase`}>{unit}</span>}
+    <div>
+      <div className="text-xl font-extrabold font-mono tabular-nums text-slate-900 tracking-tight">
+        {value}
+      </div>
+      {subLabel && (
+        <span className="text-[11px] font-medium text-slate-400 block mt-0.5 truncate">
+          {subLabel}
+        </span>
+      )}
     </div>
-    {subLabel && <span className="text-[8px] text-slate-300 font-black uppercase tracking-tighter mt-0.5">{subLabel}</span>}
   </div>
 );
-
