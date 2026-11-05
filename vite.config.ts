@@ -46,5 +46,17 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    build: {
+      chunkSizeWarningLimit: 2000,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            react: ['react', 'react-dom', 'motion'],
+            firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+            ton: ['@tonconnect/ui-react', '@ton/core'],
+          },
+        },
+      },
+    },
   };
 });
