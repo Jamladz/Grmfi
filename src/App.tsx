@@ -461,6 +461,24 @@ function App() {
 
           // Sync referrals in background for referrer
           syncReferralsForUser(userDocId, data);
+
+          // Process pending incoming referral if not yet processed
+          if (!data.hasProcessedReferral && !data.referredBy) {
+            const refSnapKey = `snap_ref_${userDocId}`;
+            if (!processedDailyBonusRef.current.has(refSnapKey)) {
+              processedDailyBonusRef.current.add(refSnapKey);
+              processReferral(userDocId, data, latestTg).then((res) => {
+                if (res && res.success && res.reward) {
+                  setReferralBonusModal({
+                    show: true,
+                    reward: res.reward,
+                    referrerName: res.referrerUsername || 'Friend',
+                    isPremium: !!res.isPremium
+                  });
+                }
+              });
+            }
+          }
         } else {
           // Create initial profile with Telegram data using persistent userDocId
           const finalUsername = latestTg?.username || latestFullName || detectedUsername || ('user_' + userDocId.slice(-6));

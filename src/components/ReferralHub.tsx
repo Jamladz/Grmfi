@@ -1,81 +1,167 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Users, Copy, Share2, Gift, Loader2, Check, Award, Coins, Trophy
+import {
+  Users,
+  Copy,
+  Share2,
+  Gift,
+  Loader2,
+  Check,
+  Award,
+  Coins,
+  Trophy,
+  RefreshCw,
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
-import { REFERRAL_MILESTONES, claimMilestone, getReferredFriends } from '../lib/referrals';
+import {
+  REFERRAL_MILESTONES,
+  claimMilestone,
+  getReferredFriends,
+  STANDARD_REFERRER_REWARD,
+  PREMIUM_REFERRER_REWARD
+} from '../lib/referrals';
 import { auth, db } from '../lib/firebase';
-import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
-import { openTelegramLink, triggerHaptic } from '../lib/telegram';
+import { collection, query, limit, getDocs, onSnapshot, where } from 'firebase/firestore';
+import { openTelegramLink, triggerHaptic, getTelegramUser } from '../lib/telegram';
 
-export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => {
+export interface ReferralHubProps {
+  userProfile: any;
+  onOpenChest?: any;
+  onClaimUnclaimed?: any;
+}
+
+export const ReferralHub: React.FC<ReferralHubProps> = ({ userProfile }) => {
   const [copied, setCopied] = useState(false);
   const [friends, setFriends] = useState<any[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [successModal, setSuccessModal] = useState<{ amount: number } | null>(null);
-  
+
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
 
-  const inviteCount = Math.max(userProfile?.referralsCount || 0, userProfile?.inviteCount || 0);
-  const claimedMilestones: string[] = userProfile?.claimedMilestones || [];
-  
-  const userId = userProfile?.id || '12345';
-  const referralLink = `https://t.me/Grmfdex_bot?startapp=ref_${userId}`;
+  const tgUser = getTelegramUser();
+  const canonicalUserId = tgUser?.id
+    ? `tg_${tgUser.id}`
+    : userProfile?.telegramId
+      ? `tg_${userProfile.telegramId}`
+      : userProfile?.id || auth.currentUser?.uid || '';
+
+  const referralLink = `https://t.me/Grmfdex_bot?startapp=ref_${canonicalUserId}`;
+
+  const inviteCount = Math.max(
+    Number(userProfile?.referralsCount) || 0,
+    Number(userProfile?.inviteCount) || 0,
+    friends.length
+  );
+
+  const earnedFromFriendsList = friends.reduce(
+    (sum, f) => sum + (Number(f.reward) || STANDARD_REFERRER_REWARD),
+    0
+  );
+  const totalReferralEarned = Math.max(
+    Number(userProfile?.earnedReferralCoins) || 0,
+    earnedFromFriendsList,
+    inviteCount * STANDARD_REFERRER_REWARD
+  );
+
+  const claimedMilestones: string[] = Array.isArray(userProfile?.claimedMilestones)
+    ? userProfile.claimedMilestones
+    : [];
+
+  const loadNetworkAndLeaderboard = useCallback(async () => {
+    if (!canonicalUserId) return;
+    setLoadingFriends(true);
+    try {
+      const list = await getReferredFriends(
+        userProfile?.id || canonicalUserId,
+        tgUser?.id || userProfile?.telegramId
+      );
+      setFriends(list);
+    } catch (e) {
+      console.error('Failed to load referred friends:', e);
+    } finally {
+      setLoadingFriends(false);
+    }
+
+    setLoadingLeaderboard(true);
+    try {
+      const q = query(collection(db, 'users'), limit(500));
+      const snap = await getDocs(q);
+      const allUsers = snap.docs
+        .map((d) => {
+          const data = d.data();
+          const count = Math.max(
+            Number(data.referralsCount) || 0,
+            Number(data.inviteCount) || 0
+          );
+          const displayName =
+            data.fullName ||
+            (data.firstName ? `${data.firstName}${data.lastName ? ' ' + data.lastName : ''}`.trim() : '') ||
+            data.telegramUsername ||
+            data.username ||
+            `User #${d.id.slice(-5)}`;
+          return {
+            id: d.id,
+            telegramId: data.telegramId ? String(data.telegramId) : d.id.startsWith('tg_') ? d.id.replace(/^tg_/, '') : null,
+            displayName,
+            telegramHandle: data.telegramUsername || null,
+            photoUrl: data.photoUrl || null,
+            referralsCount: count
+          };
+        })
+        .filter((u) => u.referralsCount > 0);
+
+      // Deduplicate by telegramId
+      const byKey = new Map<string, any>();
+      for (const u of allUsers) {
+        const key = u.telegramId ? `tg_${u.telegramId}` : u.id;
+        const existing = byKey.get(key);
+        if (!existing || u.referralsCount > existing.referralsCount) {
+          byKey.set(key, u);
+        }
+      }
+
+      const sorted = Array.from(byKey.values()).sort(
+        (a, b) => b.referralsCount - a.referralsCount
+      );
+      setLeaderboard(sorted.slice(0, 20));
+    } catch (error) {
+      console.error('Error fetching leaderboard:', error);
+    } finally {
+      setLoadingLeaderboard(false);
+    }
+  }, [canonicalUserId, userProfile?.id, userProfile?.telegramId, tgUser?.id]);
 
   useEffect(() => {
-    if (userProfile?.id) {
-      setLoadingFriends(true);
-      getReferredFriends(userProfile.id)
-        .then(res => setFriends(res))
-        .catch(console.error)
-        .finally(() => setLoadingFriends(false));
-        
-      setLoadingLeaderboard(true);
-      const fetchLeaderboard = async () => {
-        try {
-          const q = query(collection(db, 'users'), orderBy('referralsCount', 'desc'), limit(20));
-          const snap = await getDocs(q);
-          const realUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-          
-          const MOCK_LEADERBOARD = [
-            { id: 'mock1', username: 'Ahmad_99', referralsCount: 247 },
-            { id: 'mock2', username: 'Ivan_77', referralsCount: 185 },
-            { id: 'mock3', username: 'Alex_dev', referralsCount: 142 },
-            { id: 'mock4', username: 'Misha_crypto', referralsCount: 110 },
-            { id: 'mock5', username: 'Omar_DZ', referralsCount: 95 },
-            { id: 'mock6', username: 'Sarah_ton', referralsCount: 82 },
-            { id: 'mock7', username: 'Dmitry_ton', referralsCount: 70 },
-            { id: 'mock8', username: 'Youssef_x', referralsCount: 58 },
-            { id: 'mock9', username: 'Crypto_mike', referralsCount: 47 },
-            { id: 'mock10', username: 'Elena_99', referralsCount: 39 },
-            { id: 'mock11', username: 'Khalid_crypto', referralsCount: 32 },
-            { id: 'mock12', username: 'Emily_x', referralsCount: 27 },
-            { id: 'mock13', username: 'Igor_x', referralsCount: 22 },
-            { id: 'mock14', username: 'Ali_ton', referralsCount: 18 },
-            { id: 'mock15', username: 'Sara_95', referralsCount: 15 },
-            { id: 'mock16', username: 'John_doe', referralsCount: 12 },
-            { id: 'mock17', username: 'Mona_z', referralsCount: 10 },
-            { id: 'mock18', username: 'Leo_ton', referralsCount: 8 },
-            { id: 'mock19', username: 'Nadia_crypto', referralsCount: 7 },
-            { id: 'mock20', username: 'Tarek_99', referralsCount: 6 },
-          ];
+    loadNetworkAndLeaderboard();
 
-          const combined = [...realUsers, ...MOCK_LEADERBOARD];
-          const uniqueCombined = Array.from(new Map(combined.map(item => [item.id, item])).values());
-          uniqueCombined.sort((a, b) => (b.referralsCount || 0) - (a.referralsCount || 0));
-          
-          setLeaderboard(uniqueCombined.slice(0, 20));
-        } catch (error) {
-          console.error("Error fetching leaderboard:", error);
-        } finally {
-          setLoadingLeaderboard(false);
-        }
-      };
-      fetchLeaderboard();
-    }
-  }, [userProfile?.id]);
+    if (!canonicalUserId) return;
+    const numericId = canonicalUserId.replace(/^tg_/, '');
+    const candidateIds = Array.from(
+      new Set([canonicalUserId, userProfile?.id, numericId].filter(Boolean) as string[])
+    );
+
+    const qLive = query(
+      collection(db, 'referrals'),
+      where('referrerId', 'in', candidateIds)
+    );
+    const unsub = onSnapshot(
+      qLive,
+      () => {
+        getReferredFriends(
+          userProfile?.id || canonicalUserId,
+          tgUser?.id || userProfile?.telegramId
+        )
+          .then((list) => setFriends(list))
+          .catch(() => {});
+      },
+      () => {}
+    );
+
+    return () => unsub();
+  }, [canonicalUserId, userProfile?.id, userProfile?.telegramId, tgUser?.id, loadNetworkAndLeaderboard]);
 
   const handleCopy = () => {
     triggerHaptic('light');
@@ -85,17 +171,18 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
   };
 
   const handleShare = () => {
-    const text = `\n\nJoin me on GRMF Fi and claim your Welcome Bonus! 🚀`;
+    triggerHaptic('medium');
+    const text = `Join me on GRMF Fi Mini App! Claim your +100 GRMF Welcome Bonus & start earning on TON 🚀`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(text)}`;
     openTelegramLink(shareUrl);
   };
 
   const handleClaim = async (milestone: any) => {
-    const targetId = userProfile?.id || auth.currentUser?.uid;
+    const targetId = userProfile?.id || canonicalUserId;
     if (!targetId || claimingId) return;
     triggerHaptic('medium');
     setClaimingId(milestone.id);
-    
+
     const success = await claimMilestone(targetId, milestone);
     if (success) {
       triggerHaptic('success');
@@ -106,21 +193,89 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
     setClaimingId(null);
   };
 
+  const formatJoinDate = (friend: any) => {
+    const ts =
+      Number(friend.timestamp) ||
+      (friend.createdAt?.toMillis ? friend.createdAt.toMillis() : 0) ||
+      (friend.createdAt?.seconds ? friend.createdAt.seconds * 1000 : 0);
+    if (!ts) return 'Verified Invite';
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return new Date(ts).toLocaleDateString();
+  };
+
   return (
     <div className="flex flex-col gap-4 pb-8">
-      {/* Referral Hero & Share Card */}
+      {/* Referral Hero & Live Stats Card */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
-              Invite Friends
+              Invite Friends & Earn
             </h1>
             <p className="text-xs text-slate-500 font-medium mt-0.5 leading-relaxed">
-              Earn <span className="font-mono font-bold text-slate-800">250 GRMF</span> per friend plus milestone rewards
+              Instant rewards credited automatically when friends open the Mini App
             </p>
           </div>
           <div className="w-11 h-11 rounded-2xl bg-sky-50 text-[#0088CC] flex items-center justify-center shrink-0">
             <Users className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Live Referral KPI Pair */}
+        <div className="grid grid-cols-2 gap-2.5 mb-4">
+          <div className="bg-slate-50/90 border border-slate-200/70 rounded-2xl p-3.5">
+            <span className="text-[11px] font-semibold text-slate-500 block">
+              Verified Invites
+            </span>
+            <div className="flex items-baseline gap-1.5 mt-1 font-mono tabular-nums">
+              <span className="text-xl font-extrabold text-slate-900">
+                {inviteCount.toLocaleString()}
+              </span>
+              <span className="text-xs font-bold text-slate-400">Friends</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-50/90 border border-slate-200/70 rounded-2xl p-3.5">
+            <span className="text-[11px] font-semibold text-slate-500 block">
+              Referral Earnings
+            </span>
+            <div className="flex items-baseline gap-1.5 mt-1 font-mono tabular-nums">
+              <span className="text-xl font-extrabold text-emerald-600">
+                +{totalReferralEarned.toLocaleString()}
+              </span>
+              <span className="text-xs font-bold text-[#0088CC]">GRMF</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Reward Tiers Breakdown */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="rounded-2xl bg-slate-50 px-3 py-2.5 border border-slate-200/60 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-slate-700 block">Standard Friend</span>
+              <span className="text-[10px] text-slate-400 font-medium">Friend gets +100</span>
+            </div>
+            <span className="text-xs font-mono tabular-nums font-extrabold text-[#0088CC]">
+              +{STANDARD_REFERRER_REWARD} GRMF
+            </span>
+          </div>
+
+          <div className="rounded-2xl bg-amber-50/60 px-3 py-2.5 border border-amber-200/60 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                <span>TG Premium</span>
+                <Sparkles className="w-3 h-3 text-amber-500" />
+              </span>
+              <span className="text-[10px] text-amber-700/80 font-medium">Friend gets +200</span>
+            </div>
+            <span className="text-xs font-mono tabular-nums font-extrabold text-amber-600">
+              +{PREMIUM_REFERRER_REWARD} GRMF
+            </span>
           </div>
         </div>
 
@@ -131,16 +286,26 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
               {referralLink}
             </span>
           </div>
-          <button 
+          <button
             onClick={handleCopy}
             aria-label="Copy referral link"
-            className="min-h-[40px] min-w-[40px] bg-slate-100 hover:bg-slate-200/80 rounded-xl flex items-center justify-center text-slate-700 transition-colors shrink-0 cursor-pointer"
+            className="min-h-[40px] px-3 bg-slate-100 hover:bg-slate-200/80 rounded-xl flex items-center justify-center gap-1.5 text-slate-700 text-xs font-bold transition-colors shrink-0 cursor-pointer"
           >
-            {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+            {copied ? (
+              <>
+                <Check className="w-4 h-4 text-emerald-600" />
+                <span className="text-emerald-600">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                <span>Copy</span>
+              </>
+            )}
           </button>
         </div>
 
-        <button 
+        <button
           onClick={handleShare}
           className="w-full min-h-[44px] bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.99] transition-all text-xs cursor-pointer"
         >
@@ -172,24 +337,28 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
                 <div className="flex justify-between items-center mb-2">
                   <div>
                     <span className="text-xs font-bold text-slate-900 block">
-                      Invite {ms.targetCount} Friends
+                      Invite {ms.targetCount} {ms.targetCount === 1 ? 'Friend' : 'Friends'}
                     </span>
                     <span className="text-xs font-mono tabular-nums font-bold text-emerald-600">
                       +{ms.rewardCoins.toLocaleString()} GRMF
                     </span>
                   </div>
-                  
+
                   {isClaimed ? (
                     <span className="text-xs font-bold text-slate-400 flex items-center gap-1">
-                      <Check className="w-3.5 h-3.5" /> Claimed
+                      <Check className="w-3.5 h-3.5 text-emerald-500" /> Claimed
                     </span>
                   ) : isReady ? (
-                    <button 
+                    <button
                       onClick={() => handleClaim(ms)}
                       disabled={claimingId === ms.id}
                       className="min-h-[36px] px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1 cursor-pointer"
                     >
-                      {claimingId === ms.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Claim Reward'}
+                      {claimingId === ms.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        'Claim Reward'
+                      )}
                     </button>
                   ) : (
                     <span className="text-xs font-mono tabular-nums font-bold text-slate-500">
@@ -197,10 +366,16 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
                     </span>
                   )}
                 </div>
-                
+
                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ${isClaimed ? 'bg-slate-300' : isReady ? 'bg-amber-500' : 'bg-[#0088CC]'}`}
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      isClaimed
+                        ? 'bg-emerald-500'
+                        : isReady
+                          ? 'bg-amber-500'
+                          : 'bg-[#0088CC]'
+                    }`}
                     style={{ width: `${progress}%` }}
                   />
                 </div>
@@ -213,44 +388,90 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
       {/* Invited Friends List */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-extrabold text-slate-900">Your Network</h2>
-          <span className="text-xs font-mono tabular-nums text-slate-500 font-semibold">{friends.length} joined</span>
+          <div>
+            <h2 className="text-sm font-extrabold text-slate-900">Your Network</h2>
+            <p className="text-[11px] text-slate-400 font-medium">
+              Friends who joined via your link ({friends.length})
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              triggerHaptic('light');
+              loadNetworkAndLeaderboard();
+            }}
+            disabled={loadingFriends}
+            className="h-8 w-8 rounded-xl bg-slate-100 hover:bg-slate-200/70 flex items-center justify-center text-slate-600 transition-colors cursor-pointer"
+            title="Refresh Network"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingFriends ? 'animate-spin' : ''}`} />
+          </button>
         </div>
-        
-        {loadingFriends ? (
-          <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+
+        {loadingFriends && friends.length === 0 ? (
+          <div className="py-8 flex justify-center">
+            <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+          </div>
         ) : friends.length === 0 ? (
-          <div className="py-6 text-center">
-            <p className="text-xs font-semibold text-slate-500">No friends joined yet</p>
-            <p className="text-[11px] text-slate-400 mt-0.5">Share your invite link above to start earning</p>
+          <div className="py-8 text-center">
+            <p className="text-xs font-semibold text-slate-600">No friends joined yet</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Share your invite link above to earn +{STANDARD_REFERRER_REWARD} GRMF per friend
+            </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 max-h-[200px] overflow-y-auto no-scrollbar">
-            {friends.map((friend) => (
-              <div key={friend.id} className="py-2.5 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600">
-                    {(friend.referredUsername || 'U')[0].toUpperCase()}
+          <div className="divide-y divide-slate-100 max-h-[260px] overflow-y-auto no-scrollbar">
+            {friends.map((friend) => {
+              const initial = (friend.referredUsername?.replace(/^@/, '')[0] || 'U').toUpperCase();
+              return (
+                <div key={friend.id} className="py-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {friend.photoUrl ? (
+                      <img
+                        src={friend.photoUrl}
+                        alt={friend.referredUsername}
+                        referrerPolicy="no-referrer"
+                        className="w-9 h-9 rounded-2xl object-cover border border-slate-200/80 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-2xl bg-slate-100 flex items-center justify-center text-xs font-extrabold text-slate-700 border border-slate-200/60 shrink-0">
+                        {initial}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-900 truncate">
+                          {friend.referredUsername || 'Telegram User'}
+                        </span>
+                        {friend.isPremium && (
+                          <span className="text-[10px] font-bold text-amber-500" title="Telegram Premium">
+                            ★
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
+                        {friend.referredTelegramUsername && (
+                          <>
+                            <span className="text-[#0088CC] font-semibold">
+                              @{String(friend.referredTelegramUsername).replace(/^@/, '')}
+                            </span>
+                            <span>·</span>
+                          </>
+                        )}
+                        <span>{formatJoinDate(friend)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 block">
-                      {friend.referredUsername || 'Telegram User'}
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      {friend.createdAt?.seconds ? new Date(friend.createdAt.seconds * 1000).toLocaleDateString() : 'Recently'}
-                    </span>
-                  </div>
+                  <span className="text-xs font-mono tabular-nums font-extrabold text-emerald-600 shrink-0">
+                    +{friend.reward || STANDARD_REFERRER_REWARD} GRMF
+                  </span>
                 </div>
-                <span className="text-xs font-mono tabular-nums font-bold text-emerald-600">
-                  +{friend.reward} GRMF
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Weekly Leaderboard */}
+      {/* Live Top Referrers Leaderboard */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs">
         <div className="flex items-center justify-between mb-3.5">
           <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
@@ -258,51 +479,77 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
             <span>Top Referrers</span>
           </h2>
           <span className="text-xs font-semibold text-slate-500">
-            Pool: <strong className="font-mono tabular-nums text-slate-900">300 GRAM</strong>
+            Live Ranking
           </span>
         </div>
-        
-        {loadingLeaderboard ? (
-          <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+
+        {loadingLeaderboard && leaderboard.length === 0 ? (
+          <div className="py-6 flex justify-center">
+            <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+          </div>
         ) : leaderboard.length === 0 ? (
           <div className="py-6 text-center">
-            <p className="text-xs font-semibold text-slate-500">No leaderboard data yet</p>
+            <p className="text-xs font-semibold text-slate-500">
+              Be the first to invite friends and claim the #1 spot!
+            </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 max-h-[260px] overflow-y-auto no-scrollbar">
+          <div className="divide-y divide-slate-100 max-h-[280px] overflow-y-auto no-scrollbar">
             {leaderboard.map((user, index) => {
-              const isCurrentUser = user.id === userProfile?.id;
-              let reward = 0;
-              if (index === 0) reward = 100;
-              else if (index === 1) reward = 50;
-              else if (index === 2) reward = 30;
-              else if (index >= 3 && index <= 9) reward = 10;
-              else if (index >= 10 && index <= 19) reward = 5;
+              const isCurrentUser =
+                user.id === userProfile?.id ||
+                user.id === canonicalUserId ||
+                (user.telegramId && String(user.telegramId) === String(tgUser?.id));
 
               return (
-                <div key={user.id} className={`py-2.5 flex items-center justify-between ${isCurrentUser ? 'bg-sky-50/60 -mx-2 px-2 rounded-xl' : ''}`}>
-                  <div className="flex items-center gap-3">
-                    <span className={`w-6 text-center font-mono tabular-nums text-xs font-bold ${
-                      index === 0 ? 'text-amber-600' : index === 1 ? 'text-slate-600' : index === 2 ? 'text-orange-600' : 'text-slate-400'
-                    }`}>
+                <div
+                  key={user.id}
+                  className={`py-2.5 flex items-center justify-between ${
+                    isCurrentUser ? 'bg-sky-50/60 -mx-2 px-2 rounded-xl' : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span
+                      className={`w-6 text-center font-mono tabular-nums text-xs font-bold shrink-0 ${
+                        index === 0
+                          ? 'text-amber-600'
+                          : index === 1
+                            ? 'text-slate-600'
+                            : index === 2
+                              ? 'text-orange-600'
+                              : 'text-slate-400'
+                      }`}
+                    >
                       #{index + 1}
                     </span>
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <span>{user.username || user.telegramUsername || 'Anonymous'}</span>
-                        {isCurrentUser && <span className="text-[10px] font-semibold text-[#0088CC]">(You)</span>}
+                    <div className="min-w-0">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5 truncate">
+                        <span className="truncate">{user.displayName}</span>
+                        {isCurrentUser && (
+                          <span className="text-[10px] font-semibold text-[#0088CC] shrink-0">
+                            (You)
+                          </span>
+                        )}
                       </span>
-                      <span className="text-[11px] font-mono tabular-nums text-slate-400">
-                        {user.referralsCount || 0} invites
-                      </span>
+                      {user.telegramHandle && (
+                        <button
+                          onClick={() => openTelegramLink(`https://t.me/${user.telegramHandle.replace(/^@/, '')}`)}
+                          className="text-[11px] text-[#0088CC] hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <span>@{user.telegramHandle.replace(/^@/, '')}</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
-                  {reward > 0 && (
-                    <div className="flex items-center gap-1 text-xs font-mono tabular-nums font-bold text-slate-800">
-                      <span>+{reward}</span>
-                      <img src="https://i.suar.me/zXrj0/l" alt="GRAM" referrerPolicy="no-referrer" className="w-3.5 h-3.5 rounded-full" />
-                    </div>
-                  )}
+                  <div className="text-right shrink-0 font-mono tabular-nums">
+                    <span className="text-xs font-extrabold text-slate-900 block">
+                      {user.referralsCount} {user.referralsCount === 1 ? 'Invite' : 'Invites'}
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-600">
+                      +{(user.referralsCount * STANDARD_REFERRER_REWARD).toLocaleString()} GRMF
+                    </span>
+                  </div>
                 </div>
               );
             })}
@@ -314,14 +561,14 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
       <AnimatePresence>
         {successModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
               onClick={() => setSuccessModal(null)}
             />
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, scale: 0.92, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 12 }}
@@ -330,19 +577,21 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
               <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mb-4">
                 <Gift className="w-7 h-7 text-amber-500" />
               </div>
-              <h2 className="text-base font-extrabold text-slate-900 mb-1">Milestone Unlocked!</h2>
+              <h2 className="text-base font-extrabold text-slate-900 mb-1">
+                Milestone Unlocked!
+              </h2>
               <p className="text-xs text-slate-500 mb-5">
                 Added directly to your Global Assets balance.
               </p>
-              
+
               <div className="w-full bg-slate-50 rounded-2xl py-3 px-4 flex items-center justify-center gap-2 mb-5 border border-slate-200/60">
                 <Coins className="w-5 h-5 text-amber-500" />
                 <span className="text-lg font-extrabold font-mono tabular-nums text-slate-900">
                   +{successModal.amount.toLocaleString()} GRMF
                 </span>
               </div>
-              
-              <button 
+
+              <button
                 onClick={() => setSuccessModal(null)}
                 className="w-full min-h-[44px] py-3 bg-slate-900 text-white rounded-xl font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
               >
@@ -355,9 +604,3 @@ export const ReferralHub: React.FC<{ userProfile: any }> = ({ userProfile }) => 
     </div>
   );
 };
-
-export interface ReferralHubProps {
-  userProfile: any;
-  onOpenChest?: any;
-  onClaimUnclaimed?: any;
-}
