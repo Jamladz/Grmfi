@@ -259,19 +259,20 @@ export const SwapCard: React.FC<SwapCardProps> = ({
 
         {/* PRIMARY CTA */}
         <div className="mt-4">
-          {!wallet.isConnected ? (
+          {numFrom <= 0 ? (
             <button
-              onClick={onOpenConnectModal}
-              className="w-full min-h-[48px] py-3.5 rounded-2xl bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold text-sm tracking-tight shadow-md shadow-[#0088CC]/15 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
+              type="button"
+              onClick={() => handlePercentClick(25)}
+              className="w-full min-h-[48px] py-3.5 rounded-2xl bg-slate-100 hover:bg-slate-200/80 text-slate-600 font-bold text-sm transition-colors cursor-pointer"
             >
-              <span>Connect TON Wallet</span>
+              Enter an amount to swap
             </button>
-          ) : numFrom <= 0 ? (
+          ) : numFrom > userBalance ? (
             <button
               disabled
-              className="w-full min-h-[48px] py-3.5 rounded-2xl bg-slate-100 text-slate-400 font-bold text-sm cursor-not-allowed"
+              className="w-full min-h-[48px] py-3.5 rounded-2xl bg-rose-50 text-rose-500 border border-rose-200/60 font-bold text-sm cursor-not-allowed"
             >
-              Enter an amount
+              Insufficient {fromToken.symbol} Balance
             </button>
           ) : (
             <button

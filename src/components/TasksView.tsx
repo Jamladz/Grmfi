@@ -11,8 +11,12 @@ import {
   ExternalLink,
   PartyPopper,
   Clock,
-  RefreshCw
+  RefreshCw,
+  Zap,
+  Bot
 } from 'lucide-react';
+import { useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
+import { toNano } from '@ton/core';
 import { auth } from '../lib/firebase';
 import { grantReward } from '../lib/rewardsEngine';
 import { useHomeScreenShortcut } from '../hooks/useHomeScreenShortcut';
@@ -26,6 +30,7 @@ interface TasksViewProps {
 }
 
 const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000; // Exact 24 hours in milliseconds
+const TREASURY_ADDRESS = 'UQAJcp9v_CqgdqHmAjs8sZRs0UPkQgZBuWct2AfMBJfgP6QS';
 
 function sanitizeTimestamp(val: any, now: number): number {
   if (typeof val !== 'number' || isNaN(val) || val <= 0) return 0;
@@ -79,6 +84,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
   setActiveView,
   onSelectSwapPair
 }) => {
+  const [tonConnectUI] = useTonConnectUI();
+  const tonWallet = useTonWallet();
   const [activeTab, setActiveTab] = useState<'all' | 'daily' | 'special'>('all');
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [successModal, setSuccessModal] = useState<{ title: string; amount: number; subtitle?: string } | null>(null);
@@ -111,6 +118,33 @@ export const TasksView: React.FC<TasksViewProps> = ({
   // One-time special tasks
   const shortcutTaskCompleted = taskProgress['shortcut_tg']?.status === 'completed';
   const tgChannelCompleted = taskProgress['tg_channel']?.status === 'completed';
+
+  const partnerTasks = [
+    {
+      id: 'partner_mining_usdt',
+      label: 'Launch USDT Mining 2027 Bot',
+      subtitle: 'Partner Mini App',
+      url: 'https://t.me/Miningusdt2027_bot?startapp=ref_1368899842',
+      reward: 500,
+      xp: 50
+    },
+    {
+      id: 'partner_ngm_mining',
+      label: 'Join NGM Cloud Mining Bot',
+      subtitle: 'Partner Cloud Mining',
+      url: 'https://t.me/NGMCloudeminingbot?start=ref_NHQ9KEHR',
+      reward: 500,
+      xp: 50
+    },
+    {
+      id: 'partner_riftycoin',
+      label: 'Launch RiftyCoin Mini App',
+      subtitle: 'Partner Ecosystem App',
+      url: 'https://t.me/riftycoinbot?startapp=ref_1368899842',
+      reward: 500,
+      xp: 50
+    }
+  ];
 
   const swapTasks = [
     { id: 'swap_grmf_gram', symbol: 'GRAM', label: 'Daily Swap: GRMF → GRAM', reward: 50, xp: 20 },
@@ -182,7 +216,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
     extraUpdates: Record<string, any> = {},
     subtitle?: string
   ) => {
-    const targetId = userProfile?.id || auth.currentUser?.uid;
+    const targetId =
+      userProfile?.id ||
+      localStorage.getItem('grmf_persistent_doc_id') ||
+      auth.currentUser?.uid;
     if (!targetId) return;
     triggerHaptic('medium');
     setClaimingId(taskId);
@@ -207,8 +244,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
         triggerHaptic('success');
         setSuccessModal({
           title: taskId.includes('shortcut') ? 'Shortcut Added!' : 
-                 taskId === 'daily_login' ? 'Daily Check-In Claimed!' : 
-                 taskId === 'mystery_box' ? 'Mystery Box Opened!' : 'Daily Mission Claimed!',
+                 taskId === 'daily_login' ? 'On-Chain Daily Check-In Claimed!' : 
+                 taskId === 'mystery_box' ? 'Mystery Box Opened!' : 'Mission Reward Claimed!',
           amount: rewardAmount,
           subtitle
         });
@@ -248,13 +285,33 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
   const handleJoinChannel = async () => {
     openTelegramLink('https://t.me/Grmfdex');
+    setClaimingId('tg_channel');
     setTimeout(() => {
       const ts = Date.now();
       handleClaimTask('tg_channel', 500, 50, 'task_tg_channel', {
         'taskProgress.tg_channel.status': 'completed',
         'taskProgress.tg_channel.completedAt': ts
       });
-    }, 5000);
+    }, 4500);
+  };
+
+  const handlePartnerTask = async (task: typeof partnerTasks[0]) => {
+    openTelegramLink(task.url);
+    setClaimingId(task.id);
+    setTimeout(() => {
+      const ts = Date.now();
+      handleClaimTask(
+        task.id,
+        task.reward,
+        task.xp,
+        `task_${task.id}`,
+        {
+          [`taskProgress.${task.id}.status`]: 'completed',
+          [`taskProgress.${task.id}.completedAt`]: ts
+        },
+        `${task.label} verified! +${task.reward} GRMF added.`
+      );
+    }, 4500);
   };
 
   const handleClaimShortcut = async () => {
@@ -268,21 +325,47 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
   const handleDailyCheckin = async () => {
     if (loginCooldown.isCooldown) return;
-    const ts = Date.now();
-    const nextStreak = activeStreak + 1;
-    await handleClaimTask(
-      'daily_login',
-      25,
-      10,
-      'task_daily_login',
-      {
-        'taskProgress.daily_login.status': 'completed',
-        'taskProgress.daily_login.completedAt': ts,
-        'taskProgress.daily_login.claimedAt': ts,
-        'taskProgress.daily_login.streak': nextStreak
-      },
-      `Day ${nextStreak} streak active! Next check-in unlocks in 24:00:00.`
-    );
+    triggerHaptic('medium');
+
+    if (!tonWallet) {
+      tonConnectUI.openModal();
+      return;
+    }
+
+    setClaimingId('daily_login');
+    try {
+      const transaction = {
+        validUntil: Math.floor(Date.now() / 1000) + 600,
+        messages: [
+          {
+            address: TREASURY_ADDRESS,
+            amount: toNano('0.05').toString()
+          }
+        ]
+      };
+
+      await tonConnectUI.sendTransaction(transaction);
+
+      const ts = Date.now();
+      const nextStreak = activeStreak + 1;
+      await handleClaimTask(
+        'daily_login',
+        100,
+        30,
+        'task_daily_login_ton',
+        {
+          'taskProgress.daily_login.status': 'completed',
+          'taskProgress.daily_login.completedAt': ts,
+          'taskProgress.daily_login.claimedAt': ts,
+          'taskProgress.daily_login.streak': nextStreak
+        },
+        `0.05 TON verified! Day ${nextStreak} streak active · Next check-in unlocks in 24:00:00.`
+      );
+    } catch (err) {
+      console.warn('Daily Check-In 0.05 TON transaction cancelled or failed:', err);
+      triggerHaptic('error');
+      setClaimingId(null);
+    }
   };
 
   const handleOpenBox = async () => {
@@ -356,7 +439,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
           <div className="text-right shrink-0">
             <span className="text-[10px] font-semibold text-slate-400 block">Daily Pool</span>
-            <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+310 GRMF/24h</span>
+            <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+385 GRMF/24h</span>
           </div>
         </div>
       </div>
@@ -366,7 +449,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
         {[
           { id: 'all', label: 'All Missions' },
           { id: 'daily', label: `Daily 24h (${availableDailyCount})` },
-          { id: 'special', label: 'One-Time' },
+          { id: 'special', label: 'Partner & Special' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -387,7 +470,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
       {/* Unified Task List Surface */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
-        {/* Daily Task 1: Daily Streak Check-in (Renews every 24h) */}
+        {/* Daily Task 1: On-Chain Daily Check-In (0.05 TON -> +100 GRMF, Renews every 24h) */}
         {(activeTab === 'all' || activeTab === 'daily') && (
           <div className="p-4 flex items-center justify-between gap-3.5 hover:bg-slate-50/60 transition-colors">
             <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
@@ -403,14 +486,14 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
-                <span className="font-mono tabular-nums font-bold text-amber-600">+25 GRMF</span>
+                <span className="font-mono tabular-nums font-bold text-amber-600">+100 GRMF</span>
                 <span className="mx-1.5 text-slate-300">·</span>
                 {loginCooldown.isCooldown ? (
                   <span className="font-mono tabular-nums text-slate-600 font-semibold">
                     Renews in {loginCooldown.formatted}
                   </span>
                 ) : (
-                  <span>24h cycle ready</span>
+                  <span className="font-mono tabular-nums text-slate-600">0.05 TON On-Chain</span>
                 )}
               </p>
               {loginCooldown.isCooldown && (
@@ -437,9 +520,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 <button
                   onClick={handleDailyCheckin}
                   disabled={claimingId === 'daily_login'}
-                  className="min-h-[40px] bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  className="min-h-[40px] bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap font-mono tabular-nums"
                 >
-                  <span>{claimingId === 'daily_login' ? 'Claiming...' : 'Check In'}</span>
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{claimingId === 'daily_login' ? 'Confirming...' : '0.05 TON'}</span>
                 </button>
               )}
             </div>
@@ -563,6 +647,46 @@ export const TasksView: React.FC<TasksViewProps> = ({
                   >
                     <span>Swap</span>
                     <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Partner Telegram Bot Tasks */}
+        {(activeTab === 'all' || activeTab === 'special') && partnerTasks.map((task) => {
+          const isCompleted = taskProgress?.[task.id]?.status === 'completed';
+
+          return (
+            <div key={task.id} className="p-4 flex items-center justify-between gap-3.5 hover:bg-slate-50/60 transition-colors">
+              <div className="w-11 h-11 rounded-2xl bg-sky-50 text-[#0088CC] flex items-center justify-center shrink-0">
+                <Bot className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-bold text-slate-900 truncate">
+                  {task.label}
+                </h4>
+                <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
+                  <span className="font-mono tabular-nums font-bold text-emerald-600">+{task.reward} GRMF</span>
+                  <span className="mx-1.5 text-slate-300">·</span>
+                  <span>{isCompleted ? 'Completed' : task.subtitle}</span>
+                </p>
+              </div>
+              <div className="shrink-0">
+                {isCompleted ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-bold px-2.5 py-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Done</span>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handlePartnerTask(task)}
+                    disabled={claimingId === task.id}
+                    className="min-h-[40px] bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold text-xs px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <span>{claimingId === task.id ? 'Verifying...' : 'Start'}</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>

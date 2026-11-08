@@ -660,116 +660,129 @@ function App() {
     walletName: tonConnectUI.account ? 'TON Wallet' : null,
   };
 
+  const rawToAmount = fromAmount && !isNaN(parseFloat(fromAmount)) && parseFloat(fromAmount) > 0
+    ? parseFloat(fromAmount) * (fromToken.priceUsd / toToken.priceUsd)
+    : 0;
+
+  const toAmount = rawToAmount > 0
+    ? rawToAmount < 0.01
+      ? rawToAmount.toFixed(6)
+      : rawToAmount < 1
+        ? rawToAmount.toFixed(4)
+        : rawToAmount.toFixed(2)
+    : '';
+
   const handleSwap = async () => {
-    if (!wallet.isConnected) {
-      setIsWalletOpen(true);
-      return;
+    const fAmt = parseFloat(fromAmount);
+    const tAmt = rawToAmount;
+    if (isNaN(fAmt) || fAmt <= 0 || isNaN(tAmt) || tAmt <= 0) return;
+
+    const availFrom = mergedBalances[fromToken.symbol] || 0;
+    if (fAmt > availFrom) return;
+
+    const targetId =
+      userProfile?.id ||
+      localStorage.getItem('grmf_persistent_doc_id') ||
+      auth.currentUser?.uid;
+
+    const fromSym = fromToken.symbol;
+    const toSym = toToken.symbol;
+    const partnerSym = fromSym === 'GRMF' ? toSym : toSym === 'GRMF' ? fromSym : toSym;
+    const taskId = partnerSym && partnerSym !== 'GRMF' ? `swap_grmf_${partnerSym.toLowerCase()}` : null;
+    const nowTs = Date.now();
+
+    const canCompleteSwapTask = (progressMap: any, id: string | null) => {
+      if (!id) return false;
+      const entry = progressMap?.[id];
+      if (!entry || typeof entry !== 'object') return true;
+      if (!entry.status) return true;
+      // Only lock if already 'claimed' within the last 24h; if 'completed' or expired, mark completed!
+      if (entry.status !== 'claimed') return true;
+      const lastTs = sanitizeTaskTimestamp(entry.claimedAt || entry.completedAt || 0, nowTs);
+      return lastTs === 0 || (nowTs - lastTs >= DAILY_TASK_COOLDOWN_MS);
+    };
+
+    const curBeta = { ...mergedBalances };
+    const curReal = { ...(userProfile?.realBalances || {}), GRMF: mergedBalances.GRMF };
+
+    const newBetaFrom = Math.max(0, (curBeta[fromSym] || 0) - fAmt);
+    const newBetaTo = Number(((curBeta[toSym] || 0) + tAmt).toFixed(6));
+
+    const newRealFrom = Math.max(0, (curReal[fromSym] || 0) - fAmt);
+    const newRealTo = Number(((curReal[toSym] || 0) + tAmt).toFixed(6));
+
+    const updatedBeta = { ...curBeta, [fromSym]: newBetaFrom, [toSym]: newBetaTo };
+    const updatedReal = { ...curReal, [fromSym]: newRealFrom, [toSym]: newRealTo };
+
+    // Immediately update local state & mark swap task completed right away
+    setBalances(updatedBeta);
+    if (toSym === 'GRMF') setRealGrmf(newRealTo);
+    else if (fromSym === 'GRMF') setRealGrmf(newRealFrom);
+
+    const prevProgress = userProfile?.taskProgress || {};
+    const shouldMarkTaskCompleted = taskId ? canCompleteSwapTask(prevProgress, taskId) : false;
+    const updatedProgress = { ...prevProgress };
+    if (taskId && shouldMarkTaskCompleted) {
+      updatedProgress[taskId] = {
+        ...(updatedProgress[taskId] || {}),
+        status: 'completed',
+        completedAt: nowTs
+      };
     }
 
-    const fAmt = parseFloat(fromAmount);
-    const tAmt = parseFloat(toAmount);
-    if (isNaN(fAmt) || fAmt <= 0 || isNaN(tAmt) || tAmt <= 0) return;
+    setUserProfile((prev: any) => {
+      const nextProfile = {
+        ...(prev || {}),
+        betaBalances: updatedBeta,
+        realBalances: updatedReal,
+        taskProgress: updatedProgress
+      };
+      try {
+        localStorage.setItem('grmf_cached_profile', JSON.stringify(nextProfile));
+        localStorage.setItem('grmf_cached_balances', JSON.stringify(updatedBeta));
+        localStorage.setItem('grmf_cached_real_grmf', String(updatedReal.GRMF || 0));
+      } catch (e) {}
+      return nextProfile;
+    });
+
+    // Persist swap & task completion to Firestore immediately so it is never lost
+    if (targetId) {
+      const firestoreUpdate: Record<string, any> = {
+        betaBalances: updatedBeta,
+        realBalances: updatedReal,
+        lastActiveAt: serverTimestamp(),
+        lastActiveTimestamp: nowTs
+      };
+
+      if (taskId && shouldMarkTaskCompleted) {
+        firestoreUpdate[`taskProgress.${taskId}.status`] = 'completed';
+        firestoreUpdate[`taskProgress.${taskId}.completedAt`] = nowTs;
+      }
+
+      grantReward({
+        userId: targetId,
+        telegramId: userProfile?.telegramId,
+        username: userProfile?.username || userProfile?.telegramUsername,
+        firstName: userProfile?.firstName,
+        source: `swap_${fromSym}_to_${toSym}`,
+        amount: 0,
+        xp: 30,
+        balanceType: 'real',
+        extraUserUpdates: firestoreUpdate
+      }).catch((err) => console.warn('Swap reward sync warning:', err));
+    }
 
     setTxState('submitting');
     setTxHash(null);
 
-    setTimeout(async () => {
+    setTimeout(() => {
       setTxState('confirming');
-      setTimeout(async () => {
+      setTimeout(() => {
+        triggerHaptic('success');
         setTxState('success');
         setTxHash('0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6));
-        
-        const targetId = userProfile?.id || auth.currentUser?.uid;
-        if (targetId) {
-          const userRef = doc(db, 'users', targetId);
-          const fromSym = fromToken.symbol;
-          const toSym = toToken.symbol;
-
-          const curBeta = { ...balances };
-          const curReal = { ...(userProfile?.realBalances || {}) };
-
-          // Calculate updated balances for both testnet & real assets
-          const newBetaFrom = Math.max(0, (curBeta[fromSym] || 0) - fAmt);
-          const newBetaTo = (curBeta[toSym] || 0) + tAmt;
-
-          const newRealFrom = Math.max(0, (curReal[fromSym] || 0) - fAmt);
-          const newRealTo = (curReal[toSym] || 0) + tAmt;
-
-          const updatedBeta = { ...curBeta, [fromSym]: newBetaFrom, [toSym]: newBetaTo };
-          const updatedReal = { ...curReal, [fromSym]: newRealFrom, [toSym]: newRealTo };
-
-          // Optimistic local state updates
-          setBalances(updatedBeta);
-          if (toSym === 'GRMF') setRealGrmf(newRealTo);
-          else if (fromSym === 'GRMF') setRealGrmf(newRealFrom);
-
-          const taskId = (fromSym === 'GRMF' && toSym) ? `swap_grmf_${toSym.toLowerCase()}` : null;
-          const nowTs = Date.now();
-
-          const canCompleteSwapTask = (progressMap: any, id: string | null) => {
-            if (!id) return false;
-            const entry = progressMap?.[id];
-            if (!entry || typeof entry !== 'object') return true;
-            if (!entry.status) return true;
-            const lastTs = sanitizeTaskTimestamp(entry.claimedAt || entry.completedAt || 0, nowTs);
-            // Allow completing again if 24 hours have passed since last completion/claim
-            return lastTs === 0 || (nowTs - lastTs >= DAILY_TASK_COOLDOWN_MS);
-          };
-
-          setUserProfile((prev: any) => {
-            const prevProgress = prev?.taskProgress || {};
-            const updatedProgress = { ...prevProgress };
-            if (taskId && canCompleteSwapTask(updatedProgress, taskId)) {
-              updatedProgress[taskId] = {
-                ...(updatedProgress[taskId] || {}),
-                status: 'completed',
-                completedAt: nowTs
-              };
-            }
-            return {
-              ...prev,
-              betaBalances: updatedBeta,
-              realBalances: updatedReal,
-              taskProgress: updatedProgress
-            };
-          });
-
-          // Cache locally for instant reload
-          try {
-            localStorage.setItem('grmf_cached_balances', JSON.stringify(updatedBeta));
-            localStorage.setItem('grmf_cached_real_grmf', String(updatedReal.GRMF || 0));
-          } catch (e) {}
-
-          // 1. Prepare consolidated Firestore updates
-          const firestoreUpdate: any = {
-            betaBalances: updatedBeta,
-            realBalances: updatedReal,
-            lastActiveAt: serverTimestamp(),
-            lastActiveTimestamp: nowTs
-          };
-          
-          // TASK COMPLETION: If swapping GRMF to another token (renews every 24h)
-          if (taskId && canCompleteSwapTask(userProfile?.taskProgress, taskId)) {
-            firestoreUpdate[`taskProgress.${taskId}.status`] = 'completed';
-            firestoreUpdate[`taskProgress.${taskId}.completedAt`] = nowTs;
-          }
-
-          // 2. Grant Reward & XP & Record Transaction in ONE atomic flow
-          // We use grantReward which handles transaction and user balance updates
-          await grantReward({
-            userId: targetId,
-            telegramId: userProfile?.telegramId,
-            username: userProfile?.username || userProfile?.telegramUsername,
-            firstName: userProfile?.firstName,
-            source: `swap_${fromSym}_to_${toSym}`,
-            amount: tAmt,
-            xp: 30, // Consolidate XP here
-            balanceType: 'real',
-            extraUserUpdates: firestoreUpdate // Consolidate all other user updates here
-          });
-        }
-      }, 1500);
-    }, 1000);
+      }, 900);
+    }, 600);
   };
 
   const handleSelectToken = (token: Token) => {
@@ -792,8 +805,6 @@ function App() {
     setToToken(prevFrom);
     setFromAmount('');
   };
-
-  const toAmount = fromAmount ? (parseFloat(fromAmount) * (fromToken.priceUsd / toToken.priceUsd)).toFixed(2) : '';
   
   const handleOpenChest = async (chestId: string, rewards: { symbol: string, amount: number }) => {
     const targetId = userProfile?.id || auth.currentUser?.uid;
@@ -980,6 +991,11 @@ function App() {
                   const targetToken = TOKENS.find(t => t.symbol.toUpperCase() === toSymbol.toUpperCase());
                   if (grmfToken) setFromToken(grmfToken);
                   if (targetToken) setToToken(targetToken);
+                  if (!fromAmount || parseFloat(fromAmount) <= 0) {
+                    const availGrmf = mergedBalances.GRMF || 0;
+                    const defaultSwapAmt = availGrmf >= 100 ? 100 : availGrmf > 0 ? Math.max(1, Math.floor(availGrmf * 0.25)) : 100;
+                    setFromAmount(String(defaultSwapAmt));
+                  }
                   setActiveView('swap');
                 }}
               />
@@ -1183,6 +1199,7 @@ function App() {
         toAmount={toAmount || '0'}
         toSymbol={toToken.symbol}
         onClose={() => setTxState('idle')}
+        onGoToTasks={() => setActiveView('tasks')}
       />
 
       <TokenSelectModal 
