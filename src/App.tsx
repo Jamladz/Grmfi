@@ -694,12 +694,10 @@ function App() {
     const canCompleteSwapTask = (progressMap: any, id: string | null) => {
       if (!id) return false;
       const entry = progressMap?.[id];
-      if (!entry || typeof entry !== 'object') return true;
-      if (!entry.status) return true;
-      // Only lock if already 'claimed' within the last 24h; if 'completed' or expired, mark completed!
-      if (entry.status !== 'claimed') return true;
-      const lastTs = sanitizeTaskTimestamp(entry.claimedAt || entry.completedAt || 0, nowTs);
-      return lastTs === 0 || (nowTs - lastTs >= DAILY_TASK_COOLDOWN_MS);
+      if (!entry) return true;
+      const status = typeof entry === 'object' ? entry.status : entry;
+      // One-time swap task: only mark completed if not already completed or claimed
+      return status !== 'completed' && status !== 'claimed';
     };
 
     const curBeta = { ...mergedBalances };

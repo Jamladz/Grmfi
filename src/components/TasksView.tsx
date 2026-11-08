@@ -10,7 +10,6 @@ import {
   ArrowRight,
   ExternalLink,
   PartyPopper,
-  Clock,
   RefreshCw,
   Zap,
   Bot
@@ -93,7 +92,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
   
   const { status: shortcutStatus, addToHomeScreen } = useHomeScreenShortcut();
 
-  // Live 1-second precision clock for all 24h task timers
+  // Live 1-second precision clock for 24h daily task timers
   useEffect(() => {
     const interval = setInterval(() => {
       setNow(Date.now());
@@ -146,15 +145,15 @@ export const TasksView: React.FC<TasksViewProps> = ({
     }
   ];
 
+  // One-Time DEX Swap Missions (each task can only be completed & claimed once)
   const swapTasks = [
-    { id: 'swap_grmf_gram', symbol: 'GRAM', label: 'Daily Swap: GRMF → GRAM', reward: 50, xp: 20 },
-    { id: 'swap_grmf_usdt', symbol: 'USDT', label: 'Daily Swap: GRMF → USDT', reward: 50, xp: 20 },
-    { id: 'swap_grmf_not', symbol: 'NOT', label: 'Daily Swap: GRMF → NOT', reward: 50, xp: 20 },
-    { id: 'swap_grmf_dogs', symbol: 'DOGS', label: 'Daily Swap: GRMF → DOGS', reward: 50, xp: 20 },
-    { id: 'swap_grmf_hmstr', symbol: 'HMSTR', label: 'Daily Swap: GRMF → HMSTR', reward: 50, xp: 20 },
+    { id: 'swap_grmf_gram', symbol: 'GRAM', label: 'Swap GRMF to GRAM', reward: 50, xp: 20 },
+    { id: 'swap_grmf_usdt', symbol: 'USDT', label: 'Swap GRMF to USDT', reward: 50, xp: 20 },
+    { id: 'swap_grmf_not', symbol: 'NOT', label: 'Swap GRMF to NOT', reward: 50, xp: 20 },
+    { id: 'swap_grmf_dogs', symbol: 'DOGS', label: 'Swap GRMF to DOGS', reward: 50, xp: 20 },
+    { id: 'swap_grmf_hmstr', symbol: 'HMSTR', label: 'Swap GRMF to HMSTR', reward: 50, xp: 20 },
   ];
 
-  // Evaluate each swap task's 24h cycle state
   const evaluatedSwapTasks = swapTasks.map((task) => {
     const rawTask = taskProgress?.[task.id];
     const status = typeof rawTask === 'object' && rawTask !== null 
@@ -163,43 +162,20 @@ export const TasksView: React.FC<TasksViewProps> = ({
         ? rawTask 
         : undefined;
 
-    const claimedAt = sanitizeTimestamp(rawTask?.claimedAt, now);
-    const completedAt = sanitizeTimestamp(rawTask?.completedAt, now);
-
-    // If claimed within the last 24h -> Cooldown state
-    const claimCooldown = getCooldownState(claimedAt || (status === 'claimed' ? completedAt : 0), now);
-    if (status === 'claimed' && claimCooldown.isCooldown) {
-      return {
-        ...task,
-        cycleState: 'cooldown' as const,
-        cooldown: claimCooldown
-      };
+    if (status === 'claimed') {
+      return { ...task, taskState: 'claimed' as const };
     }
-
-    // If swap was executed within the last 24h and not yet claimed -> Ready to claim
-    const completeCooldown = getCooldownState(completedAt, now);
-    if (status === 'completed' && completeCooldown.isCooldown) {
-      return {
-        ...task,
-        cycleState: 'ready_to_claim' as const,
-        cooldown: completeCooldown
-      };
+    if (status === 'completed') {
+      return { ...task, taskState: 'ready_to_claim' as const };
     }
-
-    // Otherwise (never done, or >= 24h elapsed since last claim/completion) -> Available
-    return {
-      ...task,
-      cycleState: 'available' as const,
-      cooldown: { isCooldown: false, remainingMs: 0, progressPct: 100, formatted: '00:00:00' }
-    };
+    return { ...task, taskState: 'available' as const };
   });
 
-  // Compute aggregate 24h cycle metrics
-  const totalDailyCount = 2 + evaluatedSwapTasks.length; // 7 daily tasks
+  // Compute aggregate 24h cycle metrics for the 2 recurring daily tasks
+  const totalDailyCount = 2;
   const activeCooldowns = [
     ...(loginCooldown.isCooldown ? [loginCooldown.remainingMs] : []),
-    ...(boxCooldown.isCooldown ? [boxCooldown.remainingMs] : []),
-    ...evaluatedSwapTasks.filter(t => t.cycleState === 'cooldown').map(t => t.cooldown.remainingMs)
+    ...(boxCooldown.isCooldown ? [boxCooldown.remainingMs] : [])
   ];
   const completedDailyCount = activeCooldowns.length;
   const availableDailyCount = totalDailyCount - completedDailyCount;
@@ -268,6 +244,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
   };
 
   const handleClaimSwapTask = async (taskId: string, reward: number, xp: number) => {
+    // Prevent claiming more than once
+    const currentStatus = taskProgress?.[taskId]?.status;
+    if (currentStatus === 'claimed') return;
+
     const claimTs = Date.now();
     await handleClaimTask(
       taskId,
@@ -276,10 +256,9 @@ export const TasksView: React.FC<TasksViewProps> = ({
       `task_${taskId}`,
       {
         [`taskProgress.${taskId}.status`]: 'claimed',
-        [`taskProgress.${taskId}.claimedAt`]: claimTs,
-        [`taskProgress.${taskId}.completedAt`]: claimTs
+        [`taskProgress.${taskId}.claimedAt`]: claimTs
       },
-      'This mission will automatically renew in 24 hours.'
+      'One-time DEX Swap Mission permanently completed!'
     );
   };
 
@@ -400,7 +379,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
               Reward Missions
             </h1>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Daily tasks renew automatically every 24 hours
+              Complete daily check-ins, DEX swaps & partner missions
             </p>
           </div>
           <div className="text-right">
@@ -419,7 +398,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900">
-                <span className="font-mono tabular-nums">{availableDailyCount}/{totalDailyCount} Ready</span>
+                <span className="font-mono tabular-nums">{availableDailyCount}/{totalDailyCount} Daily Ready</span>
                 <span className="text-slate-300">·</span>
                 <span className="text-amber-600 font-mono tabular-nums">
                   Day {Math.max(1, activeStreak)} Streak
@@ -428,7 +407,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
               <p className="text-[11px] text-slate-500 font-medium truncate mt-0.5">
                 {nextRenewalFormatted ? (
                   <>
-                    Next renewal in <span className="font-mono tabular-nums font-bold text-slate-700">{nextRenewalFormatted}</span>
+                    Next daily reset in <span className="font-mono tabular-nums font-bold text-slate-700">{nextRenewalFormatted}</span>
                   </>
                 ) : (
                   'All 24h daily missions are ready to claim'
@@ -439,7 +418,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
           <div className="text-right shrink-0">
             <span className="text-[10px] font-semibold text-slate-400 block">Daily Pool</span>
-            <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+385 GRMF/24h</span>
+            <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+135 GRMF/24h</span>
           </div>
         </div>
       </div>
@@ -449,7 +428,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
         {[
           { id: 'all', label: 'All Missions' },
           { id: 'daily', label: `Daily 24h (${availableDailyCount})` },
-          { id: 'special', label: 'Partner & Special' },
+          { id: 'special', label: 'One-Time & Swap' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -585,76 +564,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
           </div>
         )}
 
-        {/* Daily Tasks 3-7: Daily DEX Swap Missions (Renew every 24h) */}
-        {(activeTab === 'all' || activeTab === 'daily') && evaluatedSwapTasks.map((task) => {
-          const isCooldown = task.cycleState === 'cooldown';
-          const isReadyToClaim = task.cycleState === 'ready_to_claim';
-
-          return (
-            <div key={task.id} className="p-4 flex items-center justify-between gap-3.5 hover:bg-slate-50/60 transition-colors">
-              <div className="w-11 h-11 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
-                <Coins className="w-5 h-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-bold text-slate-900 truncate">
-                  {task.label}
-                </h4>
-                <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
-                  <span className="font-mono tabular-nums font-bold text-emerald-600">+{task.reward} GRMF</span>
-                  <span className="mx-1.5 text-slate-300">·</span>
-                  {isCooldown ? (
-                    <span className="font-mono tabular-nums text-slate-600 font-semibold">
-                      Renews in {task.cooldown.formatted}
-                    </span>
-                  ) : isReadyToClaim ? (
-                    <span className="text-emerald-600 font-semibold">Swap verified — Ready to claim</span>
-                  ) : (
-                    <span>Renews every 24h</span>
-                  )}
-                </p>
-                {isCooldown && (
-                  <div className="w-full max-w-[160px] h-1 bg-slate-100 rounded-full overflow-hidden mt-1.5">
-                    <div 
-                      className="h-full bg-[#0088CC] rounded-full transition-all duration-500"
-                      style={{ width: `${task.cooldown.progressPct}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="shrink-0">
-                {isCooldown ? (
-                  <div className="flex flex-col items-end">
-                    <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-bold">
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>Claimed</span>
-                    </span>
-                    <span className="text-[11px] font-mono tabular-nums text-slate-400 font-semibold mt-0.5">
-                      {task.cooldown.formatted}
-                    </span>
-                  </div>
-                ) : isReadyToClaim ? (
-                  <button
-                    onClick={() => handleClaimSwapTask(task.id, task.reward, task.xp)}
-                    disabled={claimingId === task.id}
-                    className="min-h-[40px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                  >
-                    <span>{claimingId === task.id ? 'Claiming...' : `Claim +${task.reward}`}</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleGoToSwap(task.symbol)}
-                    className="min-h-[40px] bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs px-3.5 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                  >
-                    <span>Swap</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Partner Telegram Bot Tasks */}
+        {/* Partner Telegram Bot Tasks (One-Time) */}
         {(activeTab === 'all' || activeTab === 'special') && partnerTasks.map((task) => {
           const isCompleted = taskProgress?.[task.id]?.status === 'completed';
 
@@ -687,6 +597,60 @@ export const TasksView: React.FC<TasksViewProps> = ({
                   >
                     <span>{claimingId === task.id ? 'Verifying...' : 'Start'}</span>
                     <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* One-Time DEX Swap Missions (Each completable once only) */}
+        {(activeTab === 'all' || activeTab === 'special') && evaluatedSwapTasks.map((task) => {
+          const isClaimed = task.taskState === 'claimed';
+          const isReadyToClaim = task.taskState === 'ready_to_claim';
+
+          return (
+            <div key={task.id} className="p-4 flex items-center justify-between gap-3.5 hover:bg-slate-50/60 transition-colors">
+              <div className="w-11 h-11 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                <Coins className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-bold text-slate-900 truncate">
+                  {task.label}
+                </h4>
+                <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
+                  <span className="font-mono tabular-nums font-bold text-emerald-600">+{task.reward} GRMF</span>
+                  <span className="mx-1.5 text-slate-300">·</span>
+                  {isClaimed ? (
+                    <span>Completed</span>
+                  ) : isReadyToClaim ? (
+                    <span className="text-emerald-600 font-semibold">Swap verified — Ready to claim</span>
+                  ) : (
+                    <span>One-time DEX mission</span>
+                  )}
+                </p>
+              </div>
+              <div className="shrink-0">
+                {isClaimed ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-bold px-2.5 py-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Claimed</span>
+                  </span>
+                ) : isReadyToClaim ? (
+                  <button
+                    onClick={() => handleClaimSwapTask(task.id, task.reward, task.xp)}
+                    disabled={claimingId === task.id}
+                    className="min-h-[40px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <span>{claimingId === task.id ? 'Claiming...' : `Claim +${task.reward}`}</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleGoToSwap(task.symbol)}
+                    className="min-h-[40px] bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs px-3.5 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                  >
+                    <span>Swap</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
