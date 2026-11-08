@@ -1,44 +1,33 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
     function isAdmin() {
-      return isSignedIn() && (
+      return request.auth != null && (
         request.auth.token.email == 'sekanedrmessaif@gmail.com'
       );
     }
 
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && (request.auth.uid == userId || userId.matches('^tg_[0-9]+$') || isAdmin());
+      allow read, create, update: if true;
       allow delete: if isAdmin();
     }
     match /userTasks/{taskDocId} {
-      allow read, write: if isSignedIn();
+      allow read, write: if true;
     }
     match /referrals/{refId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update, delete: if isAdmin();
+      allow read, create, update: if true;
+      allow delete: if isAdmin();
     }
     match /transactions/{txId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId.matches('^tg_[0-9]+$') || isAdmin());
-      allow create: if isSignedIn();
-      allow update, delete: if isAdmin();
+      allow read, create, update: if true;
+      allow delete: if isAdmin();
     }
     match /global/{docId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read, write: if true;
     }
     match /withdrawal_requests/{docId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId.matches('^tg_[0-9]+$') || isAdmin());
-      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || request.resource.data.userId.matches('^tg_[0-9]+$'));
-      allow update: if isSignedIn() && isAdmin();
+      allow read, create, update: if true;
       allow delete: if isAdmin();
     }
   }
 }
-

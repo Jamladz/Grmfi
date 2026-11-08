@@ -52,7 +52,8 @@ import { TokenSelectModal } from './components/TokenSelectModal';
 import { AdminView } from './components/AdminView';
 import { PresaleHub } from './components/PresaleHub';
 import { SettingsModal } from './components/SettingsModal';
-import { triggerHaptic, initTelegramFullScreen, getTelegramUser } from './lib/telegram';
+import { WhitepaperModal } from './components/WhitepaperModal';
+import { triggerHaptic, initTelegramFullScreen, getTelegramUser, isStrictAdminUser } from './lib/telegram';
 import { Users, ShieldAlert, Gift, Rocket } from 'lucide-react';
 
 import { TOKENS, POOLS } from './data/tokens';
@@ -189,6 +190,7 @@ function App() {
   const [isTokenSelectOpen, setIsTokenSelectOpen] = useState(false);
   const [selectingSide, setSelectingSide] = useState<'from' | 'to' | null>(null);
   const [isWalletOpen, setIsWalletOpen] = useState(false);
+  const [isWhitepaperOpen, setIsWhitepaperOpen] = useState(false);
   const [txState, setTxState] = useState<TransactionState>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
   const [appError, setAppError] = useState<string | null>(null);
@@ -197,6 +199,26 @@ function App() {
   const instantTgUsername = tgUser?.username || (
     tgUser?.first_name ? `${tgUser.first_name}${tgUser.last_name ? ' ' + tgUser.last_name : ''}`.trim() : null
   );
+
+  // Deterministic initial document ID so userProfile.id is always available on first render
+  const initialDocId = (() => {
+    if (tgUser?.id) {
+      const id = `tg_${tgUser.id}`;
+      try {
+        localStorage.setItem('grmf_persistent_doc_id', id);
+      } catch (e) {}
+      return id;
+    }
+    try {
+      const stored = localStorage.getItem('grmf_persistent_doc_id');
+      if (stored) return stored;
+      const generated = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      localStorage.setItem('grmf_persistent_doc_id', generated);
+      return generated;
+    } catch (e) {
+      return `web_${Date.now()}`;
+    }
+  })();
 
   // Hydrate initial state from localStorage cache to prevent zero flash on restart
   const [userProfile, setUserProfile] = useState<any>(() => {
@@ -207,17 +229,25 @@ function App() {
         const { data: sanitized } = normalizeAndSanitizeUserData(parsed);
         return {
           ...sanitized,
+          id: tgUser?.id ? `tg_${tgUser.id}` : (sanitized.id || initialDocId),
           username: instantTgUsername || sanitized.username,
-          telegramUsername: instantTgUsername || sanitized.telegramUsername
+          telegramUsername: tgUser?.username || sanitized.telegramUsername || instantTgUsername,
+          firstName: tgUser?.first_name || sanitized.firstName || null,
+          lastName: tgUser?.last_name || sanitized.lastName || null,
+          telegramId: tgUser?.id ? Number(tgUser.id) : (sanitized.telegramId || null),
+          photoUrl: tgUser?.photo_url || sanitized.photoUrl || null,
         };
       }
     } catch (e) {}
     return instantTgUsername ? {
+      id: initialDocId,
       username: instantTgUsername,
-      telegramUsername: instantTgUsername,
+      telegramUsername: tgUser?.username || null,
+      firstName: tgUser?.first_name || null,
+      lastName: tgUser?.last_name || null,
       photoUrl: tgUser?.photo_url || null,
-      telegramId: tgUser?.id || null,
-    } : null;
+      telegramId: tgUser?.id ? Number(tgUser.id) : null,
+    } : { id: initialDocId };
   });
 
   const [balances, setBalances] = useState<Record<string, number>>(() => {
@@ -261,14 +291,13 @@ function App() {
   const WELCOME_REWARD = 4000;
   const DAILY_REWARD_REAL = 5;
 
-  // Admin access check for sekanedr_is and Ridha1993
-  const rawTgUsername = tgUser?.username || userProfile?.telegramUsername || userProfile?.username || '';
-  const sanitizedTgUsername = rawTgUsername.toLowerCase().replace(/^@/, '').trim();
-  const isAdmin = sanitizedTgUsername === 'sekanedr_is' || sanitizedTgUsername === 'ridha1993' || auth.currentUser?.email === 'sekanedrmessaif@gmail.com';
+  // Strict Admin access check: ONLY Telegram username @sekanedr_is
+  const isAdmin = isStrictAdminUser(tgUser, userProfile, auth.currentUser?.email);
 
   // Helper function: Resolve permanent, immutable user document ID across reloads
-  const resolveUserDocId = async (user: any): Promise<string> => {
-    const currentTgId = tgUser?.id ? String(tgUser.id) : null;
+  const resolveUserDocId = async (firebaseUser?: any): Promise<string> => {
+    const latestTgUser = getTelegramUser() || tgUser;
+    const currentTgId = latestTgUser?.id ? String(latestTgUser.id) : null;
     const storedDocId = localStorage.getItem('grmf_persistent_doc_id');
 
     // 1. Telegram WebApp context (permanent tg_ID)
@@ -318,100 +347,160 @@ function App() {
       } catch (e) {}
     }
 
-    const finalId = storedDocId || user.uid;
-    localStorage.setItem('grmf_persistent_doc_id', finalId);
+    const finalId = storedDocId || firebaseUser?.uid || initialDocId;
+    try {
+      localStorage.setItem('grmf_persistent_doc_id', finalId);
+    } catch (e) {}
     return finalId;
   };
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const detectedUsername = instantTgUsername;
-        const userDocId = await resolveUserDocId(user);
-        const userRef = doc(db, 'users', userDocId);
+    let unsubProfile: (() => void) | null = null;
+    let isInitialized = false;
 
-        // FAST CHECK for Welcome Bonus modal
-        try {
-          const fastSnap = await getDoc(userRef);
-          if (fastSnap.exists()) {
-            const data = fastSnap.data();
-            if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
-              setShowWelcomeModal(true);
-            }
-          } else {
+    const bootUserSession = async (firebaseUser?: any) => {
+      if (isInitialized) return;
+      isInitialized = true;
+
+      const activeTgUser = getTelegramUser() || tgUser;
+      const detectedUsername = activeTgUser?.username || (
+        activeTgUser?.first_name
+          ? `${activeTgUser.first_name}${activeTgUser.last_name ? ' ' + activeTgUser.last_name : ''}`.trim()
+          : instantTgUsername
+      );
+      const userDocId = await resolveUserDocId(firebaseUser);
+      const userRef = doc(db, 'users', userDocId);
+
+      // Immediately upsert Telegram Mini App user identity on launch so every visitor is recorded in Firestore
+      const tgFullName = activeTgUser?.first_name
+        ? `${activeTgUser.first_name}${activeTgUser.last_name ? ' ' + activeTgUser.last_name : ''}`.trim()
+        : null;
+      const nowTs = Date.now();
+
+      if (activeTgUser?.id) {
+        const immediateIdentityPayload: Record<string, any> = {
+          telegramId: Number(activeTgUser.id),
+          telegramIdStr: String(activeTgUser.id),
+          username: activeTgUser.username || tgFullName || detectedUsername || `tg_${activeTgUser.id}`,
+          telegramUsername: activeTgUser.username || null,
+          firstName: activeTgUser.first_name || null,
+          lastName: activeTgUser.last_name || null,
+          fullName: tgFullName || null,
+          photoUrl: activeTgUser.photo_url || null,
+          isPremium: Boolean(activeTgUser.is_premium),
+          languageCode: activeTgUser.language_code || null,
+          isTelegramMiniApp: true,
+          lastActiveAt: serverTimestamp(),
+          lastActiveTimestamp: nowTs,
+        };
+        setDoc(userRef, immediateIdentityPayload, { merge: true }).catch((err) => {
+          console.warn("Immediate Telegram identity upsert warning:", err);
+        });
+      }
+
+      // FAST CHECK for Welcome Bonus modal
+      try {
+        const fastSnap = await getDoc(userRef);
+        if (fastSnap.exists()) {
+          const data = fastSnap.data();
+          if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
             setShowWelcomeModal(true);
           }
-        } catch (e) {
-          console.warn("Fast check failed:", e);
+        } else {
+          setShowWelcomeModal(true);
         }
+      } catch (e) {
+        console.warn("Fast check failed:", e);
+      }
 
-        setIsAppReady(true);
+      setIsAppReady(true);
 
-        const unsubProfile = onSnapshot(userRef, (docSnap) => {
-          if (docSnap.exists()) {
-            const rawData = docSnap.data();
-            const { data } = normalizeAndSanitizeUserData(rawData);
-            const fullProfile = { id: userDocId, ...data };
-            setUserProfile(fullProfile);
-            setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
-            setRealGrmf(data.realBalances?.GRMF || 0);
-            setAppError(null);
+      unsubProfile = onSnapshot(userRef, (docSnap) => {
+        const latestTg = getTelegramUser() || activeTgUser;
+        const latestFullName = latestTg?.first_name
+          ? `${latestTg.first_name}${latestTg.last_name ? ' ' + latestTg.last_name : ''}`.trim()
+          : tgFullName;
 
-            // Persist locally for instant loading upon re-entry
-            try {
-              localStorage.setItem('grmf_cached_profile', JSON.stringify(fullProfile));
-              localStorage.setItem('grmf_cached_balances', JSON.stringify(data.betaBalances || {}));
-              localStorage.setItem('grmf_cached_real_grmf', String(data.realBalances?.GRMF || 0));
-            } catch (e) {}
+        if (docSnap.exists()) {
+          const rawData = docSnap.data();
+          const { data } = normalizeAndSanitizeUserData(rawData);
 
-            // Sync referrals in background for referrer
-            syncReferralsForUser(userDocId, data);
-          } else {
-            // Create initial profile with Telegram data using persistent userDocId
-            const tgFullName = tgUser?.first_name
-              ? `${tgUser.first_name}${tgUser.last_name ? ' ' + tgUser.last_name : ''}`.trim()
-              : null;
-            const finalUsername = tgUser?.username || tgFullName || detectedUsername || ('user_' + userDocId.slice(-6));
-            const initialData = {
-              username: finalUsername,
-              telegramUsername: tgUser?.username || null,
-              firstName: tgUser?.first_name || null,
-              lastName: tgUser?.last_name || null,
-              fullName: tgFullName || null,
-              telegramId: tgUser?.id ? Number(tgUser.id) : null,
-              photoUrl: tgUser?.photo_url || null,
-              isPremium: Boolean(tgUser?.is_premium),
-              languageCode: tgUser?.language_code || null,
-              points: 0,
-              rank: 0,
-              inviteCount: 0,
-              referralsCount: 0,
+          // If the doc was created by referral or immediate upsert without full defaults, ensure defaults exist
+          if (data.hasCollectedWelcomeBonus === undefined && !data.createdTimestamp) {
+            setDoc(userRef, {
               createdAt: serverTimestamp(),
-              createdTimestamp: Date.now(),
-              lastActiveAt: serverTimestamp(),
-              lastActiveTimestamp: Date.now(),
-              betaBalances: { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 },
-              realBalances: { GRMF: 0 },
-              openedChests: [],
-              hasCollectedWelcomeBonus: false,
-              hasProcessedReferral: false
-            };
+              createdTimestamp: nowTs,
+              betaBalances: data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 },
+              realBalances: data.realBalances || { GRMF: 0 },
+              hasCollectedWelcomeBonus: Boolean(data.hasCollectedWelcomeBonus),
+              hasProcessedReferral: Boolean(data.hasProcessedReferral),
+            }, { merge: true }).catch(() => {});
+          }
 
-            runTransaction(db, async (transaction) => {
-              const uSnap = await transaction.get(userRef);
-              if (!uSnap.exists()) {
-                transaction.set(userRef, initialData);
-                
-                // Update Global Stats
-                const statsRef = doc(db, 'global', 'stats');
-                transaction.set(statsRef, {
-                  totalUsers: increment(1),
-                  ...(tgUser?.id ? { realUsers: increment(1) } : {}),
-                  lastUpdatedAt: serverTimestamp()
-                }, { merge: true });
-              }
-            }).then(() => {
-              processReferral(userDocId, initialData, tgUser).then((res) => {
+          const fullProfile = {
+            id: userDocId,
+            ...data,
+            ...(latestTg?.username ? { telegramUsername: latestTg.username, username: latestTg.username } : {}),
+            ...(latestTg?.first_name ? { firstName: latestTg.first_name } : {}),
+            ...(latestTg?.last_name ? { lastName: latestTg.last_name } : {}),
+            ...(latestFullName ? { fullName: latestFullName } : {}),
+            ...(latestTg?.id ? { telegramId: Number(latestTg.id) } : {}),
+            ...(latestTg?.photo_url ? { photoUrl: latestTg.photo_url } : {}),
+          };
+          setUserProfile(fullProfile);
+          setBalances(data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
+          setRealGrmf(data.realBalances?.GRMF || 0);
+          setAppError(null);
+
+          // Persist locally for instant loading upon re-entry
+          try {
+            localStorage.setItem('grmf_cached_profile', JSON.stringify(fullProfile));
+            localStorage.setItem('grmf_cached_balances', JSON.stringify(data.betaBalances || {}));
+            localStorage.setItem('grmf_cached_real_grmf', String(data.realBalances?.GRMF || 0));
+          } catch (e) {}
+
+          // Sync referrals in background for referrer
+          syncReferralsForUser(userDocId, data);
+        } else {
+          // Create initial profile with Telegram data using persistent userDocId
+          const finalUsername = latestTg?.username || latestFullName || detectedUsername || ('user_' + userDocId.slice(-6));
+          const initialData = {
+            username: finalUsername,
+            telegramUsername: latestTg?.username || null,
+            firstName: latestTg?.first_name || null,
+            lastName: latestTg?.last_name || null,
+            fullName: latestFullName || null,
+            telegramId: latestTg?.id ? Number(latestTg.id) : null,
+            telegramIdStr: latestTg?.id ? String(latestTg.id) : null,
+            photoUrl: latestTg?.photo_url || null,
+            isPremium: Boolean(latestTg?.is_premium),
+            languageCode: latestTg?.language_code || null,
+            isTelegramMiniApp: Boolean(latestTg?.id || (window as any).Telegram?.WebApp?.initData),
+            points: 0,
+            rank: 0,
+            inviteCount: 0,
+            referralsCount: 0,
+            createdAt: serverTimestamp(),
+            createdTimestamp: Date.now(),
+            lastActiveAt: serverTimestamp(),
+            lastActiveTimestamp: Date.now(),
+            betaBalances: { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 },
+            realBalances: { GRMF: 0 },
+            openedChests: [],
+            hasCollectedWelcomeBonus: false,
+            hasProcessedReferral: false
+          };
+
+          setDoc(userRef, initialData, { merge: true })
+            .then(() => {
+              const statsRef = doc(db, 'global', 'stats');
+              setDoc(statsRef, {
+                totalUsers: increment(1),
+                ...(latestTg?.id ? { realUsers: increment(1) } : {}),
+                lastUpdatedAt: serverTimestamp()
+              }, { merge: true }).catch(() => {});
+
+              processReferral(userDocId, initialData, latestTg).then((res) => {
                 if (res && res.success && res.reward) {
                   setReferralBonusModal({
                     show: true,
@@ -421,52 +510,58 @@ function App() {
                   });
                 }
               });
-            }).catch(err => {
+            })
+            .catch(err => {
               console.warn("Initial setDoc failed:", err);
               if (err.code === 'resource-exhausted') {
                 setAppError("Rate limit exceeded. Please try again later.");
               }
             });
-            if (!localStorage.getItem(`bonus_collected_${userDocId}`)) {
-              setShowWelcomeModal(true);
-            }
+
+          if (!localStorage.getItem(`bonus_collected_${userDocId}`)) {
+            setShowWelcomeModal(true);
           }
-        }, (error: any) => {
-          console.error("Profile snapshot error:", error);
-          const cachedProfileStr = localStorage.getItem('grmf_cached_profile');
-          if (cachedProfileStr) {
-            try {
-              const cachedProfile = JSON.parse(cachedProfileStr);
-              setUserProfile(cachedProfile);
-              setBalances(cachedProfile.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
-              setRealGrmf(cachedProfile.realBalances?.GRMF || 0);
-            } catch (e) {}
+        }
+      }, (error: any) => {
+        console.error("Profile snapshot error:", error);
+        const cachedProfileStr = localStorage.getItem('grmf_cached_profile');
+        if (cachedProfileStr) {
+          try {
+            const cachedProfile = JSON.parse(cachedProfileStr);
+            setUserProfile(cachedProfile);
+            setBalances(cachedProfile.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 });
+            setRealGrmf(cachedProfile.realBalances?.GRMF || 0);
+          } catch (e) {}
+        }
+        if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota exceeded')) {
+          if (!cachedProfileStr) {
+            setAppError("Quota limit exceeded for free tier database (Spark Plan). Daily write/read units limit reached on Firestore.");
           }
-          if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota exceeded')) {
-            // Removed setQuotaWarning(true) to hide the local storage fallback alert
-            if (!cachedProfileStr) {
-              setAppError("Quota limit exceeded for free tier database (Spark Plan). Daily write/read units limit reached on Firestore.");
-            }
-          } else if (error?.code === 'permission-denied') {
-            setAppError("Access denied. Please restart the app.");
-          } else {
-            if (!cachedProfileStr) {
-              setAppError("Unable to load profile. Please check your connection.");
-            }
-          }
-          setIsAppReady(true);
-        });
-        return () => unsubProfile();
+        }
+        setIsAppReady(true);
+      });
+    };
+
+    // Start session immediately without blocking on Firebase Anonymous Auth
+    bootUserSession(auth.currentUser);
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        bootUserSession(user);
       } else {
-        signInAnonymously(auth);
+        signInAnonymously(auth).catch(() => {
+          // Ignore anonymous auth failure in Telegram WebView / Cloudflare; session already booted via Telegram ID
+        });
       }
     });
 
-    return () => unsubAuth();
+    return () => {
+      unsubAuth();
+      if (unsubProfile) unsubProfile();
+    };
   }, []);
 
   // Handle background initialization tasks (Daily Login, TG Sync, Referrals)
-  // This effect runs whenever userProfile changes, but we use refs to ensure actions are performed sparingly
   useEffect(() => {
     if (!userProfile?.id || !isAppReady) return;
 
@@ -474,6 +569,7 @@ function App() {
     const userRef = doc(db, 'users', userDocId);
     const data = userProfile;
     const now = Date.now();
+    const activeTgUser = getTelegramUser() || tgUser;
 
     // 1. Daily Login Bonus (Once per day - Resets at UTC Midnight)
     const lastLoginBonusAt = data.lastLoginBonusTimestamp || 0;
@@ -492,9 +588,9 @@ function App() {
       processedDailyBonusRef.current.add(bonusKey);
       grantReward({
         userId: userDocId,
-        telegramId: tgUser?.id || data.telegramId,
+        telegramId: activeTgUser?.id || data.telegramId,
         username: data.username || data.telegramUsername,
-        firstName: tgUser?.first_name || data.firstName,
+        firstName: activeTgUser?.first_name || data.firstName,
         source: 'daily_login',
         amount: DAILY_REWARD_REAL,
         balanceType: 'both',
@@ -510,14 +606,14 @@ function App() {
     }
 
     // 2. Telegram Profile Sync (Ensure real Telegram username, name, ID, and photo are always synced)
-    const tgUsernameClean = tgUser?.username || null;
-    const tgFirstNameClean = tgUser?.first_name || null;
-    const tgLastNameClean = tgUser?.last_name || null;
+    const tgUsernameClean = activeTgUser?.username || null;
+    const tgFirstNameClean = activeTgUser?.first_name || null;
+    const tgLastNameClean = activeTgUser?.last_name || null;
     const tgFullNameClean = tgFirstNameClean ? `${tgFirstNameClean}${tgLastNameClean ? ' ' + tgLastNameClean : ''}`.trim() : null;
-    const tgIdClean = tgUser?.id ? Number(tgUser.id) : null;
-    const tgPhotoClean = tgUser?.photo_url || null;
+    const tgIdClean = activeTgUser?.id ? Number(activeTgUser.id) : null;
+    const tgPhotoClean = activeTgUser?.photo_url || null;
 
-    if (tgUser && (
+    if (activeTgUser && (
       (tgUsernameClean && data.telegramUsername !== tgUsernameClean) ||
       (tgFirstNameClean && data.firstName !== tgFirstNameClean) ||
       (tgLastNameClean && data.lastName !== tgLastNameClean) ||
@@ -527,17 +623,18 @@ function App() {
       const syncKey = `tg_sync_${userDocId}_${tgUsernameClean || ''}_${tgFirstNameClean || ''}_${tgIdClean || ''}`;
       if (!processedDailyBonusRef.current.has(syncKey)) {
         processedDailyBonusRef.current.add(syncKey);
-        updateDoc(userRef, {
+        setDoc(userRef, {
           ...(tgUsernameClean ? { username: tgUsernameClean, telegramUsername: tgUsernameClean } : tgFullNameClean ? { username: tgFullNameClean } : {}),
           ...(tgFirstNameClean ? { firstName: tgFirstNameClean } : {}),
           ...(tgLastNameClean ? { lastName: tgLastNameClean } : {}),
           ...(tgFullNameClean ? { fullName: tgFullNameClean } : {}),
-          ...(tgIdClean ? { telegramId: tgIdClean } : {}),
+          ...(tgIdClean ? { telegramId: tgIdClean, telegramIdStr: String(tgIdClean) } : {}),
           ...(tgPhotoClean ? { photoUrl: tgPhotoClean } : {}),
-          isPremium: Boolean(tgUser.is_premium),
+          isPremium: Boolean(activeTgUser.is_premium),
+          isTelegramMiniApp: true,
           lastActiveAt: serverTimestamp(),
           lastActiveTimestamp: now
-        }).catch(err => console.warn("TG sync failed:", err));
+        }, { merge: true }).catch(err => console.warn("TG sync failed:", err));
       }
     }
 
@@ -915,7 +1012,17 @@ function App() {
         onOpenSettings={() => {
           triggerHaptic('light');
           setIsSettingsOpen(true);
-        }} 
+        }}
+        onOpenWhitepaper={() => {
+          triggerHaptic('light');
+          setIsWhitepaperOpen(true);
+        }}
+        isAdmin={isAdmin}
+        isAdminViewActive={activeView === 'admin'}
+        onToggleAdmin={() => {
+          triggerHaptic('light');
+          setActiveView(activeView === 'admin' ? 'swap' : 'admin');
+        }}
       />
 
       <main className={`flex-1 w-full mx-auto px-4 pt-2 pb-[calc(5.5rem+env(safe-area-inset-bottom,20px))] flex flex-col overflow-hidden relative z-10 ${
@@ -1206,6 +1313,11 @@ function App() {
         onSelect={handleSelectToken}
         selectedToken={selectingSide === 'from' ? fromToken : toToken}
         balances={balances}
+      />
+
+      <WhitepaperModal
+        isOpen={isWhitepaperOpen}
+        onClose={() => setIsWhitepaperOpen(false)}
       />
     </div>
   );

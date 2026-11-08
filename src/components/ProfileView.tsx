@@ -213,7 +213,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
         <MenuRow 
           icon={<FileText className="w-4 h-4 text-indigo-500" />} 
           label="Protocol Whitepaper" 
-          meta="v2.4"
+          meta="v3.2 • Official"
           onClick={() => {
             triggerHaptic('light');
             setIsWhitepaperOpen(true);

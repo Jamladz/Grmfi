@@ -10,50 +10,122 @@ export interface TelegramUserData {
   photo_url?: string;
 }
 
+const TG_USER_CACHE_KEY = 'grmf_verified_tg_user';
+
+function parseUserFromInitDataString(rawInitData: string | null | undefined): TelegramUserData | null {
+  if (!rawInitData || typeof rawInitData !== 'string') return null;
+  try {
+    const params = new URLSearchParams(rawInitData);
+    const userJson = params.get('user');
+    if (userJson) {
+      const parsed = JSON.parse(decodeURIComponent(userJson));
+      if (parsed && parsed.id) return parsed as TelegramUserData;
+    }
+    const directParsed = JSON.parse(rawInitData);
+    if (directParsed && directParsed.id) return directParsed as TelegramUserData;
+  } catch (e) {
+    // Ignore parse errors
+  }
+  return null;
+}
+
 /**
  * Extracts the authenticated Telegram user from WebApp.initDataUnsafe
- * or falls back to parsing WebApp.initData / URL parameters if needed.
+ * or falls back to parsing WebApp.initData, sessionStorage.__telegram__initParams,
+ * URL parameters, or verified local cache.
  */
 export function getTelegramUser(): TelegramUserData | null {
   if (typeof window === 'undefined') return null;
   const webApp = (window as any).Telegram?.WebApp;
 
+  // 1. Primary: Telegram.WebApp.initDataUnsafe.user
   if (webApp?.initDataUnsafe?.user && webApp.initDataUnsafe.user.id) {
-    return webApp.initDataUnsafe.user as TelegramUserData;
+    const u = webApp.initDataUnsafe.user as TelegramUserData;
+    try {
+      localStorage.setItem(TG_USER_CACHE_KEY, JSON.stringify(u));
+    } catch (e) {}
+    return u;
   }
 
-  // Fallback: parse raw initData string if initDataUnsafe was not populated
-  try {
-    const rawInitData = webApp?.initData || '';
-    if (rawInitData) {
-      const params = new URLSearchParams(rawInitData);
-      const userJson = params.get('user');
-      if (userJson) {
-        const parsed = JSON.parse(decodeURIComponent(userJson));
-        if (parsed && parsed.id) return parsed as TelegramUserData;
-      }
-    }
-  } catch (e) {
-    // Ignore parse errors
+  // 2. Fallback: parse raw WebApp.initData string
+  const fromInitData = parseUserFromInitDataString(webApp?.initData);
+  if (fromInitData) {
+    try {
+      localStorage.setItem(TG_USER_CACHE_KEY, JSON.stringify(fromInitData));
+    } catch (e) {}
+    return fromInitData;
   }
 
-  // Fallback: check URL hash/query for tgWebAppData
+  // 3. Fallback: check URL hash/query for tgWebAppData
   try {
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    const tgData = hashParams.get('tgWebAppData') || new URLSearchParams(window.location.search).get('tgWebAppData');
-    if (tgData) {
-      const innerParams = new URLSearchParams(tgData);
-      const userJson = innerParams.get('user');
-      if (userJson) {
-        const parsed = JSON.parse(decodeURIComponent(userJson));
-        if (parsed && parsed.id) return parsed as TelegramUserData;
+    const tgData =
+      hashParams.get('tgWebAppData') ||
+      new URLSearchParams(window.location.search).get('tgWebAppData');
+    const fromUrl = parseUserFromInitDataString(tgData);
+    if (fromUrl) {
+      try {
+        localStorage.setItem(TG_USER_CACHE_KEY, JSON.stringify(fromUrl));
+      } catch (e) {}
+      return fromUrl;
+    }
+  } catch (e) {}
+
+  // 4. Fallback: check sessionStorage.__telegram__initParams (saved by telegram-web-app.js)
+  try {
+    const sessionParamsRaw = window.sessionStorage?.getItem('__telegram__initParams');
+    if (sessionParamsRaw) {
+      const sessionParams = JSON.parse(sessionParamsRaw);
+      const fromSession = parseUserFromInitDataString(sessionParams?.tgWebAppData);
+      if (fromSession) {
+        try {
+          localStorage.setItem(TG_USER_CACHE_KEY, JSON.stringify(fromSession));
+        } catch (e) {}
+        return fromSession;
       }
     }
-  } catch (e) {
-    // Ignore parse errors
-  }
+  } catch (e) {}
+
+  // 5. Fallback: previously verified Telegram user cached on this device
+  try {
+    const cached = localStorage.getItem(TG_USER_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.id) {
+        return parsed as TelegramUserData;
+      }
+    }
+  } catch (e) {}
 
   return null;
+}
+
+/**
+ * Checks whether the current user is strictly the authorized admin (@sekanedr_is).
+ */
+export function isStrictAdminUser(
+  tgUser?: TelegramUserData | null,
+  userProfile?: any,
+  currentEmail?: string | null
+): boolean {
+  const candidates = [
+    tgUser?.username,
+    userProfile?.telegramUsername,
+    userProfile?.username
+  ]
+    .filter(Boolean)
+    .map((u) => String(u).toLowerCase().replace(/^@/, '').trim());
+
+  if (candidates.includes('sekanedr_is')) {
+    return true;
+  }
+
+  // Allow owner email in web preview when no conflicting Telegram handle is active
+  if (candidates.length === 0 && currentEmail === 'sekanedrmessaif@gmail.com') {
+    return true;
+  }
+
+  return false;
 }
 
 /**

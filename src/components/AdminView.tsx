@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import {
   collection,
   getDocs,
@@ -26,7 +26,9 @@ import {
   TrendingUp,
   ExternalLink,
   ShieldCheck,
-  Clock
+  Clock,
+  Copy,
+  Check
 } from 'lucide-react';
 
 interface NormalizedAdminUser {
@@ -76,6 +78,8 @@ function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
   let tgIdStr: string | null = null;
   if (data.telegramId !== undefined && data.telegramId !== null && String(data.telegramId).trim() !== '') {
     tgIdStr = String(data.telegramId).trim();
+  } else if (data.telegramIdStr && String(data.telegramIdStr).trim() !== '') {
+    tgIdStr = String(data.telegramIdStr).trim();
   } else if (docId.startsWith('tg_')) {
     const extracted = docId.replace(/^tg_/, '').trim();
     if (/^\d+$/.test(extracted)) {
@@ -89,6 +93,8 @@ function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
   const isGeneratedPlaceholder = (name: string) =>
     !name ||
     /^user_[a-zA-Z0-9_-]+$/i.test(name) ||
+    /^tg_\d+$/i.test(name) ||
+    /^web_[a-zA-Z0-9_-]+$/i.test(name) ||
     name.toLowerCase() === 'anonymous' ||
     name.toLowerCase() === 'user' ||
     name.toLowerCase() === 'telegram user';
@@ -99,7 +105,7 @@ function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
     ? data.fullName.trim()
     : `${firstName} ${lastName}`.trim();
 
-  // Determine real Telegram @handle (if it looks like a valid handle without spaces and not a placeholder)
+  // Determine real Telegram @handle
   let telegramHandle: string | null = null;
   if (rawTgUsername && !isGeneratedPlaceholder(rawTgUsername) && !rawTgUsername.includes(' ')) {
     telegramHandle = rawTgUsername;
@@ -111,12 +117,14 @@ function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
   let displayName = '';
   if (fullName) {
     displayName = fullName;
+  } else if (telegramHandle) {
+    displayName = `@${telegramHandle}`;
   } else if (rawTgUsername && !isGeneratedPlaceholder(rawTgUsername)) {
     displayName = rawTgUsername;
   } else if (rawUsername && !isGeneratedPlaceholder(rawUsername)) {
     displayName = rawUsername;
   } else if (tgIdStr) {
-    displayName = `Telegram #${tgIdStr}`;
+    displayName = `Telegram User #${tgIdStr.slice(-5)}`;
   } else {
     displayName = rawUsername || `User #${docId.slice(-6)}`;
   }
@@ -124,6 +132,7 @@ function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
   const isTelegramVerified = Boolean(
     tgIdStr ||
     docId.startsWith('tg_') ||
+    data.isTelegramMiniApp ||
     telegramHandle ||
     firstName
   );
@@ -149,6 +158,7 @@ function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
     Number(data.lastActiveTimestamp) ||
     (data.lastActiveAt?.toMillis ? data.lastActiveAt.toMillis() : 0) ||
     (data.createdAt?.toMillis ? data.createdAt.toMillis() : 0) ||
+    Number(data.createdTimestamp) ||
     0;
 
   const createdTimestamp =
@@ -176,7 +186,6 @@ function normalizeUserDoc(docId: string, rawData: any): NormalizedAdminUser {
 
 /**
  * Deduplicate records that belong to the same Telegram User ID
- * (e.g., if an earlier build created both an anonymous UID doc and a tg_ID doc for the same Telegram account)
  */
 function deduplicateUsers(rawUsers: NormalizedAdminUser[]): NormalizedAdminUser[] {
   const byTelegramId = new Map<string, NormalizedAdminUser>();
@@ -192,12 +201,15 @@ function deduplicateUsers(rawUsers: NormalizedAdminUser[]): NormalizedAdminUser[
     if (!existing) {
       byTelegramId.set(user.telegramId, user);
     } else {
-      // Merge the two records for the same Telegram user, preferring canonical tg_ doc ID and non-empty names
       const preferCurrentId = user.id.startsWith('tg_') && !existing.id.startsWith('tg_');
-      const bestDisplayName =
-        !existing.displayName.startsWith('Telegram #') && !existing.displayName.startsWith('User #')
-          ? existing.displayName
-          : user.displayName;
+      const isPlaceholderDisplay = (n: string) =>
+        n.startsWith('Telegram User #') || n.startsWith('User #') || n.startsWith('user_');
+
+      const bestDisplayName = !isPlaceholderDisplay(existing.displayName)
+        ? existing.displayName
+        : !isPlaceholderDisplay(user.displayName)
+          ? user.displayName
+          : existing.displayName;
 
       byTelegramId.set(user.telegramId, {
         ...existing,
@@ -228,10 +240,13 @@ export const AdminView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'users' | 'withdrawals'>('users');
-  const [userFilter, setUserFilter] = useState<'telegram' | 'all'>('telegram');
+  const [userFilter, setUserFilter] = useState<'all' | 'telegram'>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'referrals' | 'grmf' | 'newest'>('recent');
-  const [visibleCount, setVisibleCount] = useState(100);
+  const [visibleCount, setVisibleCount] = useState(150);
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const extraDiscoveredUsersRef = useRef<Map<string, any>>(new Map());
 
   const [stats, setStats] = useState({
     totalDocs: 0,
@@ -243,7 +258,33 @@ export const AdminView: React.FC = () => {
   });
 
   const processUsersSnapshot = async (docs: any[], serverTotalCount?: number) => {
-    const normalized = docs.map((d) => normalizeUserDoc(d.id, d.data()));
+    const mergedDocsMap = new Map<string, any>();
+
+    // 1. Add all documents from /users collection
+    for (const d of docs) {
+      mergedDocsMap.set(d.id, d.data());
+    }
+
+    // 2. Merge any users discovered in /referrals or /transactions that weren't in /users yet
+    extraDiscoveredUsersRef.current.forEach((val, docId) => {
+      if (!mergedDocsMap.has(docId)) {
+        mergedDocsMap.set(docId, val);
+      } else {
+        const current = mergedDocsMap.get(docId);
+        mergedDocsMap.set(docId, {
+          ...val,
+          ...current,
+          telegramId: current.telegramId || val.telegramId || null,
+          username: current.username || val.username || null,
+          telegramUsername: current.telegramUsername || val.telegramUsername || null,
+          firstName: current.firstName || val.firstName || null
+        });
+      }
+    });
+
+    const normalized = Array.from(mergedDocsMap.entries()).map(([id, data]) =>
+      normalizeUserDoc(id, data)
+    );
     const deduplicated = deduplicateUsers(normalized);
 
     const realTgUsers = deduplicated.filter((u) => u.isTelegramVerified);
@@ -251,7 +292,7 @@ export const AdminView: React.FC = () => {
     const active24hCount = deduplicated.filter((u) => u.lastActiveTimestamp >= twentyFourHoursAgo).length;
     const sumReferrals = deduplicated.reduce((acc, u) => acc + (u.referralsCount || 0), 0);
     const sumGrmf = deduplicated.reduce((acc, u) => acc + (u.grmfBalance || 0), 0);
-    const exactTotalDocs = serverTotalCount ?? docs.length;
+    const exactTotalDocs = Math.max(serverTotalCount ?? docs.length, deduplicated.length);
 
     setAllUsers(deduplicated);
     setStats({
@@ -279,9 +320,7 @@ export const AdminView: React.FC = () => {
         },
         { merge: true }
       );
-    } catch (e) {
-      // Ignore write error if non-admin or offline
-    }
+    } catch (e) {}
   };
 
   const fetchData = async () => {
@@ -294,12 +333,49 @@ export const AdminView: React.FC = () => {
         serverCount = countSnap.data().count;
       } catch (e) {}
 
-      // 2. Fetch all user documents WITHOUT a restrictive orderBy that drops documents missing optional fields
+      // 2. Cross-reference referrals and transactions to recover any historical entrants
+      try {
+        const [refSnap, txSnap] = await Promise.all([
+          getDocs(query(collection(db, 'referrals'), limit(2000))),
+          getDocs(query(collection(db, 'transactions'), limit(2000)))
+        ]);
+
+        refSnap.docs.forEach((rDoc) => {
+          const r = rDoc.data();
+          if (r.referredId) {
+            const existing = extraDiscoveredUsersRef.current.get(r.referredId) || {};
+            extraDiscoveredUsersRef.current.set(r.referredId, {
+              ...existing,
+              username: r.referredUsername || existing.username || null,
+              telegramUsername: r.referredUsername || existing.telegramUsername || null,
+              telegramId: r.referredTelegramId || existing.telegramId || null,
+              isTelegramMiniApp: true,
+              createdTimestamp: r.createdAt?.toMillis ? r.createdAt.toMillis() : existing.createdTimestamp || 0
+            });
+          }
+        });
+
+        txSnap.docs.forEach((tDoc) => {
+          const t = tDoc.data();
+          if (t.userId) {
+            const existing = extraDiscoveredUsersRef.current.get(t.userId) || {};
+            extraDiscoveredUsersRef.current.set(t.userId, {
+              ...existing,
+              username: t.username || existing.username || null,
+              firstName: t.firstName || existing.firstName || null,
+              telegramId: t.telegramId || existing.telegramId || null,
+              lastActiveTimestamp: Math.max(Number(t.timestamp) || 0, existing.lastActiveTimestamp || 0)
+            });
+          }
+        });
+      } catch (e) {}
+
+      // 3. Fetch all user documents
       const qUsers = query(collection(db, 'users'), limit(5000));
       const snapUsers = await getDocs(qUsers);
       await processUsersSnapshot(snapUsers.docs, serverCount || snapUsers.size);
 
-      // 3. Fetch withdrawal requests
+      // 4. Fetch withdrawal requests
       const qWithdraw = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'), limit(100));
       const snapWithdraw = await getDocs(qWithdraw);
       setWithdrawals(snapWithdraw.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -336,9 +412,18 @@ export const AdminView: React.FC = () => {
       setWithdrawals((prev) => prev.map((w) => (w.id === id ? { ...w, status } : w)));
     } catch (e) {
       console.error(e);
-      setAdminNotice('Failed to update status. Only admins can perform this action.');
+      setAdminNotice('Failed to update withdrawal status.');
       setTimeout(() => setAdminNotice(null), 3500);
     }
+  };
+
+  const handleCopyId = (idText: string) => {
+    triggerHaptic('light');
+    try {
+      navigator.clipboard.writeText(idText);
+      setCopiedId(idText);
+      setTimeout(() => setCopiedId(null), 1800);
+    } catch (e) {}
   };
 
   // Filter and sort users client-side so zero users are ever dropped
@@ -380,7 +465,7 @@ export const AdminView: React.FC = () => {
   const displayedUsers = filteredAndSortedUsers.slice(0, visibleCount);
 
   const formatLastActive = (timestamp: number) => {
-    if (!timestamp) return 'New';
+    if (!timestamp) return 'Active';
     const diff = Date.now() - timestamp;
     if (diff < 0) return 'Just now';
     const mins = Math.floor(diff / 60000);
@@ -408,11 +493,16 @@ export const AdminView: React.FC = () => {
             <ShieldCheck className="w-5 h-5 text-[#0088CC]" />
           </div>
           <div>
-            <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
-              Admin Console
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                Admin Console
+              </h2>
+              <span className="text-[11px] font-bold text-[#0088CC] bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-200/60">
+                @sekanedr_is
+              </span>
+            </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Live Firestore directory · Real Telegram Bot users & analytics
+              Live Telegram Mini App Entrants · Real-time Firestore Sync
             </p>
           </div>
         </div>
@@ -425,7 +515,7 @@ export const AdminView: React.FC = () => {
           className="min-h-[40px] px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">Refresh</span>
+          <span className="hidden sm:inline">Sync Now</span>
         </button>
       </div>
 
@@ -433,21 +523,21 @@ export const AdminView: React.FC = () => {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
         <StatCard
           icon={<Users className="w-4 h-4 text-[#0088CC]" />}
-          value={stats.realTelegramUsers.toLocaleString()}
-          label="Telegram Users"
-          subLabel="Verified Bot Entrants"
+          value={stats.uniqueUsers.toLocaleString()}
+          label="Total Mini App Users"
+          subLabel={`${stats.realTelegramUsers.toLocaleString()} Verified TG Profiles`}
         />
         <StatCard
           icon={<TrendingUp className="w-4 h-4 text-slate-600" />}
-          value={stats.totalDocs.toLocaleString()}
-          label="Total Accounts"
-          subLabel={`${stats.uniqueUsers.toLocaleString()} Unique Profiles`}
+          value={stats.realTelegramUsers.toLocaleString()}
+          label="Telegram Users"
+          subLabel="With TG ID / @Handle"
         />
         <StatCard
           icon={<Activity className="w-4 h-4 text-emerald-600" />}
           value={stats.active24h.toLocaleString()}
           label="Active (24h)"
-          subLabel="Last 24 hours"
+          subLabel="Opened in last 24h"
         />
         <StatCard
           icon={<UserPlus className="w-4 h-4 text-indigo-600" />}
@@ -503,7 +593,7 @@ export const AdminView: React.FC = () => {
                 <Search className="w-4 h-4 text-slate-400 shrink-0" />
                 <input
                   type="text"
-                  placeholder="Search by real name, @username, or Telegram ID..."
+                  placeholder="Search by Telegram name, @username, or Telegram ID..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="bg-transparent border-none outline-none text-xs w-full text-slate-900 font-semibold placeholder:text-slate-400"
@@ -522,16 +612,6 @@ export const AdminView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <div className="flex bg-slate-200/70 p-0.5 rounded-xl">
                   <button
-                    onClick={() => setUserFilter('telegram')}
-                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                      userFilter === 'telegram'
-                        ? 'bg-white text-slate-900 shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Telegram ({stats.realTelegramUsers})
-                  </button>
-                  <button
                     onClick={() => setUserFilter('all')}
                     className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
                       userFilter === 'all'
@@ -541,6 +621,16 @@ export const AdminView: React.FC = () => {
                   >
                     All ({stats.uniqueUsers})
                   </button>
+                  <button
+                    onClick={() => setUserFilter('telegram')}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      userFilter === 'telegram'
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Telegram ({stats.realTelegramUsers})
+                  </button>
                 </div>
 
                 <select
@@ -549,9 +639,9 @@ export const AdminView: React.FC = () => {
                   className="bg-white border border-slate-200/80 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none cursor-pointer"
                 >
                   <option value="recent">Recently Active</option>
+                  <option value="newest">Newest Joined</option>
                   <option value="referrals">Top Referrers</option>
                   <option value="grmf">Top Balance</option>
-                  <option value="newest">Newest Joined</option>
                 </select>
               </div>
             </div>
@@ -559,12 +649,12 @@ export const AdminView: React.FC = () => {
 
           {/* Column Header */}
           <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-between border-b border-slate-100 text-[11px] font-bold text-slate-400">
-            <span>User Identity & Telegram Handle ({filteredAndSortedUsers.length})</span>
+            <span>Telegram User Identity ({filteredAndSortedUsers.length})</span>
             <span>Holdings & Referrals</span>
           </div>
 
           {/* Users Tap-List */}
-          <div className="divide-y divide-slate-100 max-h-[620px] overflow-y-auto no-scrollbar">
+          <div className="divide-y divide-slate-100 max-h-[640px] overflow-y-auto no-scrollbar">
             {loading && displayedUsers.length === 0 ? (
               <div className="p-12 text-center text-xs font-semibold text-slate-400">
                 Loading real user directory from Firestore...
@@ -574,13 +664,13 @@ export const AdminView: React.FC = () => {
                 <Users className="w-7 h-7 text-slate-300" />
                 <p className="text-sm font-bold text-slate-700">No matching users found</p>
                 <p className="text-xs text-slate-400">
-                  Try clearing your search filter or switching to "All ({stats.uniqueUsers})".
+                  Try clearing your search filter.
                 </p>
               </div>
             ) : (
               displayedUsers.map((user, index) => {
                 const isOnline = user.lastActiveTimestamp > Date.now() - 5 * 60 * 1000;
-                const initial = (user.displayName?.[0] || 'U').toUpperCase();
+                const cleanInitial = (user.displayName?.replace(/^@/, '')[0] || 'U').toUpperCase();
 
                 return (
                   <div
@@ -598,15 +688,19 @@ export const AdminView: React.FC = () => {
                           <img
                             src={user.photoUrl}
                             alt={user.displayName}
+                            referrerPolicy="no-referrer"
                             className="w-10 h-10 rounded-2xl object-cover border border-slate-200/80"
                           />
                         ) : (
                           <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-700 font-extrabold text-sm flex items-center justify-center border border-slate-200/60">
-                            {initial}
+                            {cleanInitial}
                           </div>
                         )}
                         {isOnline && (
-                          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full" />
+                          <span
+                            className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"
+                            title="Online now"
+                          />
                         )}
                       </div>
 
@@ -633,14 +727,30 @@ export const AdminView: React.FC = () => {
                               <ExternalLink className="w-3 h-3" />
                             </button>
                           ) : (
-                            <span className="text-slate-400">No @username</span>
+                            <span className="text-slate-400 text-[11px]">No @username</span>
                           )}
 
-                          {user.telegramId && (
+                          {user.telegramId ? (
                             <>
                               <span className="text-slate-300">·</span>
-                              <span className="font-mono tabular-nums text-[11px] text-slate-500">
-                                ID: {user.telegramId}
+                              <button
+                                onClick={() => handleCopyId(user.telegramId!)}
+                                className="inline-flex items-center gap-1 font-mono tabular-nums text-[11px] text-slate-600 hover:text-slate-900 cursor-pointer"
+                                title="Copy Telegram ID"
+                              >
+                                <span>TG ID: {user.telegramId}</span>
+                                {copiedId === user.telegramId ? (
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-2.5 h-2.5 text-slate-400" />
+                                )}
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-slate-300">·</span>
+                              <span className="font-mono tabular-nums text-[11px] text-slate-400">
+                                ID: {user.id.slice(0, 10)}
                               </span>
                             </>
                           )}
@@ -676,7 +786,7 @@ export const AdminView: React.FC = () => {
           {filteredAndSortedUsers.length > visibleCount && (
             <div className="p-3.5 border-t border-slate-100 bg-slate-50/50 text-center">
               <button
-                onClick={() => setVisibleCount((prev) => prev + 100)}
+                onClick={() => setVisibleCount((prev) => prev + 150)}
                 className="min-h-[38px] px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer active:scale-95"
               >
                 Show More Users ({filteredAndSortedUsers.length - visibleCount} remaining)

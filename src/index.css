@@ -57,3 +57,24 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* Ensure TonConnectButton fits cleanly inside mobile headers without clipping */
+.ton-connect-wrapper {
+  max-width: 100%;
+}
+.ton-connect-wrapper tc-root,
+.ton-connect-wrapper [data-tc-connect-button="true"],
+.ton-connect-wrapper [data-tc-dropdown-button="true"] {
+  height: 36px !important;
+  min-height: 36px !important;
+}
+@media (max-width: 390px) {
+  .ton-connect-wrapper button {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    font-size: 12px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+}
+
