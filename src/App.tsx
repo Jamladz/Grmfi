@@ -294,59 +294,20 @@ function App() {
   // Strict Admin access check: ONLY Telegram username @sekanedr_is
   const isAdmin = isStrictAdminUser(tgUser, userProfile, auth.currentUser?.email);
 
-  // Helper function: Resolve permanent, immutable user document ID across reloads
+  // Helper function: Resolve permanent, immutable user document ID across reloads with zero redundant reads
   const resolveUserDocId = async (firebaseUser?: any): Promise<string> => {
     const latestTgUser = getTelegramUser() || tgUser;
     const currentTgId = latestTgUser?.id ? String(latestTgUser.id) : null;
-    const storedDocId = localStorage.getItem('grmf_persistent_doc_id');
 
-    // 1. Telegram WebApp context (permanent tg_ID)
     if (currentTgId) {
       const tgDocId = `tg_${currentTgId}`;
-      const tgDocRef = doc(db, 'users', tgDocId);
-      
       try {
-        const tgSnap = await getDoc(tgDocRef);
-        if (tgSnap.exists()) {
-          localStorage.setItem('grmf_persistent_doc_id', tgDocId);
-          return tgDocId;
-        }
-
-        // Search existing Firestore documents by telegramId
-        const usersCol = collection(db, 'users');
-        const qNum = query(usersCol, where('telegramId', '==', Number(currentTgId)));
-        const snapNum = await getDocs(qNum);
-        if (!snapNum.empty) {
-          const foundId = snapNum.docs[0].id;
-          localStorage.setItem('grmf_persistent_doc_id', foundId);
-          return foundId;
-        }
-
-        const qStr = query(usersCol, where('telegramId', '==', currentTgId));
-        const snapStr = await getDocs(qStr);
-        if (!snapStr.empty) {
-          const foundId = snapStr.docs[0].id;
-          localStorage.setItem('grmf_persistent_doc_id', foundId);
-          return foundId;
-        }
-      } catch (e) {
-        console.warn("Telegram account resolution check failed:", e);
-      }
-
-      localStorage.setItem('grmf_persistent_doc_id', tgDocId);
+        localStorage.setItem('grmf_persistent_doc_id', tgDocId);
+      } catch (e) {}
       return tgDocId;
     }
 
-    // 2. Web browser context
-    if (storedDocId) {
-      try {
-        const storedSnap = await getDoc(doc(db, 'users', storedDocId));
-        if (storedSnap.exists()) {
-          return storedDocId;
-        }
-      } catch (e) {}
-    }
-
+    const storedDocId = localStorage.getItem('grmf_persistent_doc_id');
     const finalId = storedDocId || firebaseUser?.uid || initialDocId;
     try {
       localStorage.setItem('grmf_persistent_doc_id', finalId);
@@ -371,12 +332,22 @@ function App() {
       const userDocId = await resolveUserDocId(firebaseUser);
       const userRef = doc(db, 'users', userDocId);
 
-      // Immediately upsert Telegram Mini App user identity on launch so every visitor is recorded in Firestore
       const tgFullName = activeTgUser?.first_name
         ? `${activeTgUser.first_name}${activeTgUser.last_name ? ' ' + activeTgUser.last_name : ''}`.trim()
         : null;
       const nowTs = Date.now();
 
+      // Read any locally cached profile from earlier sessions (e.g., when offline or quota fallback was active)
+      let localCachedData: any = null;
+      try {
+        const rawCached = localStorage.getItem('grmf_cached_profile');
+        if (rawCached) {
+          const parsed = JSON.parse(rawCached);
+          localCachedData = normalizeAndSanitizeUserData(parsed).data;
+        }
+      } catch (e) {}
+
+      // Immediately upsert Telegram Mini App user identity on launch so every visitor is recorded in Firestore
       if (activeTgUser?.id) {
         const immediateIdentityPayload: Record<string, any> = {
           telegramId: Number(activeTgUser.id),
@@ -398,21 +369,6 @@ function App() {
         });
       }
 
-      // FAST CHECK for Welcome Bonus modal
-      try {
-        const fastSnap = await getDoc(userRef);
-        if (fastSnap.exists()) {
-          const data = fastSnap.data();
-          if (!data.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
-            setShowWelcomeModal(true);
-          }
-        } else {
-          setShowWelcomeModal(true);
-        }
-      } catch (e) {
-        console.warn("Fast check failed:", e);
-      }
-
       setIsAppReady(true);
 
       unsubProfile = onSnapshot(userRef, (docSnap) => {
@@ -425,16 +381,31 @@ function App() {
           const rawData = docSnap.data();
           const { data } = normalizeAndSanitizeUserData(rawData);
 
-          // If the doc was created by referral or immediate upsert without full defaults, ensure defaults exist
+          // If the user had higher balances in localStorage fallback cache, sync them up to Firestore once
+          const localGrmf = Math.max(
+            Number(localCachedData?.realBalances?.GRMF) || 0,
+            Number(localCachedData?.betaBalances?.GRMF) || 0
+          );
+          const remoteGrmf = Math.max(
+            Number(data.realBalances?.GRMF) || 0,
+            Number(data.betaBalances?.GRMF) || 0
+          );
+
           if (data.hasCollectedWelcomeBonus === undefined && !data.createdTimestamp) {
+            const mergedGrmf = Math.max(remoteGrmf, localGrmf);
             setDoc(userRef, {
               createdAt: serverTimestamp(),
               createdTimestamp: nowTs,
-              betaBalances: data.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 },
-              realBalances: data.realBalances || { GRMF: 0 },
-              hasCollectedWelcomeBonus: Boolean(data.hasCollectedWelcomeBonus),
-              hasProcessedReferral: Boolean(data.hasProcessedReferral),
+              betaBalances: localCachedData?.betaBalances || data.betaBalances || { GRMF: mergedGrmf, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 },
+              realBalances: { ...(localCachedData?.realBalances || {}), ...(data.realBalances || {}), GRMF: mergedGrmf },
+              hasCollectedWelcomeBonus: Boolean(data.hasCollectedWelcomeBonus || localCachedData?.hasCollectedWelcomeBonus),
+              hasProcessedReferral: Boolean(data.hasProcessedReferral || localCachedData?.hasProcessedReferral),
+              ...(localCachedData?.taskProgress && !data.taskProgress ? { taskProgress: localCachedData.taskProgress } : {}),
             }, { merge: true }).catch(() => {});
+          }
+
+          if (!data.hasCollectedWelcomeBonus && !localCachedData?.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
+            setShowWelcomeModal(true);
           }
 
           const fullProfile = {
@@ -480,8 +451,10 @@ function App() {
             }
           }
         } else {
-          // Create initial profile with Telegram data using persistent userDocId
+          // Create initial profile with Telegram data (merging any existing local cache from phone)
           const finalUsername = latestTg?.username || latestFullName || detectedUsername || ('user_' + userDocId.slice(-6));
+          const restoredBeta = localCachedData?.betaBalances || { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 };
+          const restoredReal = localCachedData?.realBalances || { GRMF: 0 };
           const initialData = {
             username: finalUsername,
             telegramUsername: latestTg?.username || null,
@@ -494,19 +467,21 @@ function App() {
             isPremium: Boolean(latestTg?.is_premium),
             languageCode: latestTg?.language_code || null,
             isTelegramMiniApp: Boolean(latestTg?.id || (window as any).Telegram?.WebApp?.initData),
-            points: 0,
-            rank: 0,
-            inviteCount: 0,
-            referralsCount: 0,
+            points: Number(localCachedData?.points) || 0,
+            xp: Number(localCachedData?.xp) || 0,
+            rank: Number(localCachedData?.rank) || 0,
+            inviteCount: Number(localCachedData?.inviteCount) || 0,
+            referralsCount: Number(localCachedData?.referralsCount) || 0,
             createdAt: serverTimestamp(),
             createdTimestamp: Date.now(),
             lastActiveAt: serverTimestamp(),
             lastActiveTimestamp: Date.now(),
-            betaBalances: { GRMF: 0, GRAM: 0, USDT: 0, NOT: 0, DOGS: 0, HMSTR: 0 },
-            realBalances: { GRMF: 0 },
-            openedChests: [],
-            hasCollectedWelcomeBonus: false,
-            hasProcessedReferral: false
+            betaBalances: restoredBeta,
+            realBalances: restoredReal,
+            ...(localCachedData?.taskProgress ? { taskProgress: localCachedData.taskProgress } : {}),
+            openedChests: Array.isArray(localCachedData?.openedChests) ? localCachedData.openedChests : [],
+            hasCollectedWelcomeBonus: Boolean(localCachedData?.hasCollectedWelcomeBonus),
+            hasProcessedReferral: Boolean(localCachedData?.hasProcessedReferral)
           };
 
           setDoc(userRef, initialData, { merge: true })
@@ -514,7 +489,7 @@ function App() {
               const statsRef = doc(db, 'global', 'stats');
               setDoc(statsRef, {
                 totalUsers: increment(1),
-                ...(latestTg?.id ? { realUsers: increment(1) } : {}),
+                ...(latestTg?.id ? { realUsers: increment(1), botMau: increment(1) } : {}),
                 lastUpdatedAt: serverTimestamp()
               }, { merge: true }).catch(() => {});
 
@@ -531,12 +506,9 @@ function App() {
             })
             .catch(err => {
               console.warn("Initial setDoc failed:", err);
-              if (err.code === 'resource-exhausted') {
-                setAppError("Rate limit exceeded. Please try again later.");
-              }
             });
 
-          if (!localStorage.getItem(`bonus_collected_${userDocId}`)) {
+          if (!initialData.hasCollectedWelcomeBonus && !localStorage.getItem(`bonus_collected_${userDocId}`)) {
             setShowWelcomeModal(true);
           }
         }

@@ -1,22 +1,19 @@
-import { 
-  db 
-} from './firebase';
-import { 
-  doc, 
-  setDoc, 
-  updateDoc,
-  getDoc,
-  increment, 
-  serverTimestamp, 
+import { db } from './firebase';
+import {
+  doc,
+  setDoc,
+  increment,
+  serverTimestamp,
   runTransaction
 } from 'firebase/firestore';
+import { getTelegramUser } from './telegram';
 
 export interface GrantRewardOptions {
   userId: string;
   telegramId?: string | number | null;
   username?: string | null;
   firstName?: string | null;
-  source: string; // e.g. 'welcome_bonus', 'daily_login', 'task_daily-checkin', 'daily_box', 'referral_referrer', 'referral_friend', 'testnet_swap', 'admin_grant'
+  source: string;
   amount: number;
   xp?: number;
   balanceType?: 'real' | 'both';
@@ -30,10 +27,6 @@ export interface GrantRewardResult {
   localOnly?: boolean;
 }
 
-/**
- * Helper to convert a nested object map into dot-notation strings
- * e.g. { taskProgress: { id: { status: 'completed' } } } -> { 'taskProgress.id.status': 'completed' }
- */
 export function flattenObjectToDotNotation(obj: Record<string, any>, prefix = ''): Record<string, any> {
   const result: Record<string, any> = {};
   if (!obj || typeof obj !== 'object') return result;
@@ -59,10 +52,6 @@ export function flattenObjectToDotNotation(obj: Record<string, any>, prefix = ''
   return result;
 }
 
-/**
- * Helper to convert a dot-notated map (e.g. { 'taskProgress.id.status': 'completed' })
- * into nested objects (e.g. { taskProgress: { id: { status: 'completed' } } })
- */
 export function applyDotNotationToObject(target: Record<string, any>, dotMap: Record<string, any>) {
   Object.entries(dotMap).forEach(([key, val]) => {
     if (key.includes('.')) {
@@ -84,21 +73,33 @@ export function applyDotNotationToObject(target: Record<string, any>, dotMap: Re
 
 /**
  * UNIFIED REWARD ENGINE
- * Every reward distribution in the app MUST follow this single flow:
- * 1. Validate reward parameters
- * 2. Update User Balances & Attributes (/users/{userId})
- * 3. Write Transaction Record (/transactions/{txId})
+ * Always persists Telegram identity fields (telegramId, username, telegramUsername, firstName)
+ * directly on /users/{userId} as well as /transactions/{txId}.
  */
 export async function grantReward(options: GrantRewardOptions): Promise<GrantRewardResult> {
-  const { userId, telegramId, username, firstName, source, amount, xp = 0, balanceType = 'both', extraUserUpdates = {} } = options;
+  const {
+    userId,
+    telegramId,
+    username,
+    firstName,
+    source,
+    amount,
+    xp = 0,
+    balanceType = 'both',
+    extraUserUpdates = {}
+  } = options;
 
   if (!userId || typeof amount !== 'number' || isNaN(amount) || amount < 0) {
-    console.error("Invalid grantReward parameters:", { userId, amount });
+    console.error('Invalid grantReward parameters:', { userId, amount });
     return { success: false, message: 'Invalid userId or reward amount' };
   }
 
-  const cleanTgId = telegramId ? String(telegramId) : null;
-  const cleanUsername = username || 'User';
+  const activeTg = getTelegramUser();
+  const resolvedTgId = telegramId || activeTg?.id || null;
+  const cleanTgId = resolvedTgId ? String(resolvedTgId) : null;
+  const resolvedUsername = activeTg?.username || username || null;
+  const resolvedFirstName = activeTg?.first_name || firstName || null;
+  const cleanUsername = resolvedUsername || resolvedFirstName || 'User';
   const now = Date.now();
   const txId = `tx_${userId}_${source.replace(/[^a-zA-Z0-9_-]/g, '_')}_${now}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -118,40 +119,41 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       if (xp > 0) {
         profile.xp = (profile.xp || 0) + xp;
       }
-      // Also apply extraUserUpdates optimistically if they are simple values
       applyDotNotationToObject(profile, extraUserUpdates || {});
-      
+
       localStorage.setItem('grmf_cached_profile', JSON.stringify(profile));
       window.dispatchEvent(new CustomEvent('grmf_local_profile_updated', { detail: profile }));
     }
   } catch (e) {
     console.warn('Optimistic local update failed:', e);
   }
-  // -------------------------------
 
-  try {
-    const userRef = doc(db, 'users', userId);
-    const txRef = doc(db, 'transactions', txId);
-
-    const txData = {
-      id: txId,
-      userId,
-      telegramId: cleanTgId,
-      username: cleanUsername,
-      firstName: firstName || null,
-      source,
-      rewardSource: source,
-      amount,
-      xp: xp || 0,
-      timestamp: now,
-      createdAt: serverTimestamp()
-    };
-
-    // Build a flat payload to use with set merge to ensure deep merging of nested maps
+  const buildNestedUserUpdates = () => {
     const flatUserUpdates: Record<string, any> = {
-      'lastActiveAt': serverTimestamp(),
-      'lastActiveTimestamp': now,
+      lastActiveAt: serverTimestamp(),
+      lastActiveTimestamp: now
     };
+
+    if (cleanTgId && /^\d+$/.test(cleanTgId)) {
+      flatUserUpdates.telegramId = Number(cleanTgId);
+      flatUserUpdates.telegramIdStr = cleanTgId;
+      flatUserUpdates.isTelegramMiniApp = true;
+    }
+    if (resolvedUsername && resolvedUsername !== 'User' && !resolvedUsername.startsWith('user_')) {
+      flatUserUpdates.username = resolvedUsername;
+      if (!resolvedUsername.includes(' ')) {
+        flatUserUpdates.telegramUsername = resolvedUsername;
+      }
+    }
+    if (resolvedFirstName) {
+      flatUserUpdates.firstName = resolvedFirstName;
+    }
+    if (activeTg?.last_name) {
+      flatUserUpdates.lastName = activeTg.last_name;
+    }
+    if (activeTg?.photo_url) {
+      flatUserUpdates.photoUrl = activeTg.photo_url;
+    }
 
     if (amount > 0) {
       flatUserUpdates['realBalances.GRMF'] = increment(amount);
@@ -161,118 +163,71 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
     }
 
     if (xp > 0) {
-      flatUserUpdates['xp'] = increment(xp);
+      flatUserUpdates.xp = increment(xp);
     }
 
-    // Combine with extra updates (these are usually already dot-notation)
     Object.entries(extraUserUpdates).forEach(([k, v]) => {
       flatUserUpdates[k] = v;
     });
 
     const nestedUserUpdates: Record<string, any> = {};
     applyDotNotationToObject(nestedUserUpdates, flatUserUpdates);
+    return nestedUserUpdates;
+  };
 
-    console.log(`[GrantReward] Attempting to grant ${amount} GRMF & ${xp} XP to ${userId} via ${source}`);
+  try {
+    const userRef = doc(db, 'users', userId);
+    const txRef = doc(db, 'transactions', txId);
+    const nestedUserUpdates = buildNestedUserUpdates();
 
-    // Execute atomic transaction
+    const txData = {
+      id: txId,
+      userId,
+      telegramId: cleanTgId,
+      username: cleanUsername,
+      firstName: resolvedFirstName,
+      source,
+      rewardSource: source,
+      amount,
+      xp: xp || 0,
+      timestamp: now,
+      createdAt: serverTimestamp()
+    };
+
     await runTransaction(db, async (transaction) => {
-      // 1. Update User Document safely with nested map structure for deep merge
       transaction.set(userRef, nestedUserUpdates, { merge: true });
-
-      // 2. Save Transaction Record
       transaction.set(txRef, txData, { merge: true });
-
-      // 3. Update Global Stats
-      const statsRef = doc(db, 'global', 'stats');
-      const statsUpdate: any = {
-        lastUpdatedAt: serverTimestamp()
-      };
-      if (amount > 0) {
-        statsUpdate.totalGrmf = increment(amount);
-      }
-      if (source.startsWith('referral_')) {
-        statsUpdate.totalReferrals = increment(1);
-      }
-      transaction.set(statsRef, statsUpdate, { merge: true });
     });
 
-    console.log(`[GrantReward] Success: ${txId}`);
     return { success: true, txId };
   } catch (error: any) {
-    console.warn("Unified reward transaction fallback mode:", error?.message || error);
-    
-    // If quota exceeded or offline, update local storage cache so user experience remains uninterrupted
-    if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota exceeded')) {
-      try {
-        const cached = localStorage.getItem('grmf_cached_profile');
-        if (cached) {
-          const profile = JSON.parse(cached);
-          if (amount > 0) {
-            profile.realBalances = profile.realBalances || {};
-            profile.realBalances.GRMF = (profile.realBalances.GRMF || 0) + amount;
-            if (balanceType === 'both') {
-              profile.betaBalances = profile.betaBalances || {};
-              profile.betaBalances.GRMF = (profile.betaBalances.GRMF || 0) + amount;
-            }
-          }
-          if (xp > 0) {
-            profile.xp = (profile.xp || 0) + xp;
-          }
-          applyDotNotationToObject(profile, extraUserUpdates || {});
-          localStorage.setItem('grmf_cached_profile', JSON.stringify(profile));
-        }
-      } catch (e) {}
-      return { success: true, txId, localOnly: true };
-    }
-
     try {
       const userRef = doc(db, 'users', userId);
       const txRef = doc(db, 'transactions', txId);
-
-      const flatUserUpdates: Record<string, any> = {
-        'lastActiveAt': serverTimestamp(),
-        'lastActiveTimestamp': now,
-      };
-
-      if (amount > 0) {
-        flatUserUpdates['realBalances.GRMF'] = increment(amount);
-        if (balanceType === 'both') {
-          flatUserUpdates['betaBalances.GRMF'] = increment(amount);
-        }
-      }
-
-      if (xp > 0) {
-        flatUserUpdates['xp'] = increment(xp);
-      }
-
-      Object.entries(extraUserUpdates).forEach(([k, v]) => {
-        flatUserUpdates[k] = v;
-      });
-
-      const nestedUserUpdates: Record<string, any> = {};
-      applyDotNotationToObject(nestedUserUpdates, flatUserUpdates);
+      const nestedUserUpdates = buildNestedUserUpdates();
 
       await setDoc(userRef, nestedUserUpdates, { merge: true });
-
-      await setDoc(txRef, {
-        id: txId,
-        userId,
-        telegramId: cleanTgId,
-        username: cleanUsername,
-        firstName: firstName || null,
-        source,
-        rewardSource: source,
-        amount,
-        xp: xp || 0,
-        timestamp: now,
-        createdAt: serverTimestamp()
-      }, { merge: true });
+      await setDoc(
+        txRef,
+        {
+          id: txId,
+          userId,
+          telegramId: cleanTgId,
+          username: cleanUsername,
+          firstName: resolvedFirstName,
+          source,
+          rewardSource: source,
+          amount,
+          xp: xp || 0,
+          timestamp: now,
+          createdAt: serverTimestamp()
+        },
+        { merge: true }
+      );
 
       return { success: true, txId };
     } catch (e: any) {
-      console.warn("Unified reward error fallback completed locally:", e?.message);
       return { success: true, txId, localOnly: true };
     }
   }
 }
-

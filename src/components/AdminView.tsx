@@ -7,7 +7,7 @@ import {
   limit,
   updateDoc,
   doc,
-  getCountFromServer,
+  getDoc,
   setDoc,
   serverTimestamp,
   onSnapshot
@@ -28,7 +28,8 @@ import {
   ShieldCheck,
   Clock,
   Copy,
-  Check
+  Check,
+  Edit3
 } from 'lucide-react';
 
 interface NormalizedAdminUser {
@@ -246,7 +247,12 @@ export const AdminView: React.FC = () => {
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [botMau, setBotMau] = useState<number>(4329);
+  const [isEditingMau, setIsEditingMau] = useState(false);
+  const [mauInput, setMauInput] = useState('4329');
+
   const extraDiscoveredUsersRef = useRef<Map<string, any>>(new Map());
+  const latestDocsRef = useRef<any[]>([]);
 
   const [stats, setStats] = useState({
     totalDocs: 0,
@@ -257,7 +263,8 @@ export const AdminView: React.FC = () => {
     totalGrmf: 0
   });
 
-  const processUsersSnapshot = async (docs: any[], serverTotalCount?: number) => {
+  const processUsersSnapshot = (docs: any[]) => {
+    latestDocsRef.current = docs;
     const mergedDocsMap = new Map<string, any>();
 
     // 1. Add all documents from /users collection
@@ -265,7 +272,7 @@ export const AdminView: React.FC = () => {
       mergedDocsMap.set(d.id, d.data());
     }
 
-    // 2. Merge any users discovered in /referrals or /transactions that weren't in /users yet
+    // 2. Merge any users discovered in /referrals or /transactions
     extraDiscoveredUsersRef.current.forEach((val, docId) => {
       if (!mergedDocsMap.has(docId)) {
         mergedDocsMap.set(docId, val);
@@ -275,7 +282,7 @@ export const AdminView: React.FC = () => {
           ...val,
           ...current,
           telegramId: current.telegramId || val.telegramId || null,
-          username: current.username || val.username || null,
+          username: (current.username && !String(current.username).startsWith('user_')) ? current.username : (val.username || current.username || null),
           telegramUsername: current.telegramUsername || val.telegramUsername || null,
           firstName: current.firstName || val.firstName || null
         });
@@ -292,45 +299,31 @@ export const AdminView: React.FC = () => {
     const active24hCount = deduplicated.filter((u) => u.lastActiveTimestamp >= twentyFourHoursAgo).length;
     const sumReferrals = deduplicated.reduce((acc, u) => acc + (u.referralsCount || 0), 0);
     const sumGrmf = deduplicated.reduce((acc, u) => acc + (u.grmfBalance || 0), 0);
-    const exactTotalDocs = Math.max(serverTotalCount ?? docs.length, deduplicated.length);
 
     setAllUsers(deduplicated);
     setStats({
-      totalDocs: exactTotalDocs,
+      totalDocs: docs.length,
       uniqueUsers: deduplicated.length,
       realTelegramUsers: realTgUsers.length,
       active24h: active24hCount,
       totalReferrals: sumReferrals,
       totalGrmf: Math.round(sumGrmf)
     });
-
-    // Keep global/stats document synchronized with real verified counts
-    try {
-      const statsRef = doc(db, 'global', 'stats');
-      await setDoc(
-        statsRef,
-        {
-          totalUsers: exactTotalDocs,
-          uniqueUsers: deduplicated.length,
-          realUsers: realTgUsers.length,
-          active24h: active24hCount,
-          totalReferrals: sumReferrals,
-          totalGrmf: Math.round(sumGrmf),
-          lastUpdatedAt: serverTimestamp()
-        },
-        { merge: true }
-      );
-    } catch (e) {}
   };
 
-  const fetchData = async () => {
+  const fetchAuxData = async () => {
     setLoading(true);
     try {
-      // 1. Get exact server document count
-      let serverCount = 0;
+      // 1. Fetch global/stats for BotFather MAU
       try {
-        const countSnap = await getCountFromServer(collection(db, 'users'));
-        serverCount = countSnap.data().count;
+        const statsSnap = await getDoc(doc(db, 'global', 'stats'));
+        if (statsSnap.exists()) {
+          const sData = statsSnap.data();
+          if (typeof sData.botMau === 'number' && sData.botMau > 0) {
+            setBotMau(sData.botMau);
+            setMauInput(String(sData.botMau));
+          }
+        }
       } catch (e) {}
 
       // 2. Cross-reference referrals and transactions to recover any historical entrants
@@ -347,7 +340,7 @@ export const AdminView: React.FC = () => {
             extraDiscoveredUsersRef.current.set(r.referredId, {
               ...existing,
               username: r.referredUsername || existing.username || null,
-              telegramUsername: r.referredUsername || existing.telegramUsername || null,
+              telegramUsername: r.referredTelegramUsername || r.referredUsername || existing.telegramUsername || null,
               telegramId: r.referredTelegramId || existing.telegramId || null,
               isTelegramMiniApp: true,
               createdTimestamp: r.createdAt?.toMillis ? r.createdAt.toMillis() : existing.createdTimestamp || 0
@@ -359,51 +352,72 @@ export const AdminView: React.FC = () => {
           const t = tDoc.data();
           if (t.userId) {
             const existing = extraDiscoveredUsersRef.current.get(t.userId) || {};
+            const validUsername =
+              t.username && t.username !== 'User' && !String(t.username).startsWith('user_')
+                ? t.username
+                : existing.username || t.username || null;
             extraDiscoveredUsersRef.current.set(t.userId, {
               ...existing,
-              username: t.username || existing.username || null,
+              username: validUsername,
+              telegramUsername: validUsername && !String(validUsername).includes(' ') ? validUsername : existing.telegramUsername || null,
               firstName: t.firstName || existing.firstName || null,
               telegramId: t.telegramId || existing.telegramId || null,
+              isTelegramMiniApp: Boolean(t.telegramId || existing.isTelegramMiniApp),
               lastActiveTimestamp: Math.max(Number(t.timestamp) || 0, existing.lastActiveTimestamp || 0)
             });
           }
         });
+
+        if (latestDocsRef.current.length > 0) {
+          processUsersSnapshot(latestDocsRef.current);
+        }
       } catch (e) {}
 
-      // 3. Fetch all user documents
-      const qUsers = query(collection(db, 'users'), limit(5000));
-      const snapUsers = await getDocs(qUsers);
-      await processUsersSnapshot(snapUsers.docs, serverCount || snapUsers.size);
-
-      // 4. Fetch withdrawal requests
+      // 3. Fetch withdrawal requests
       const qWithdraw = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'), limit(100));
       const snapWithdraw = await getDocs(qWithdraw);
       setWithdrawals(snapWithdraw.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      console.error('Admin fetchData error:', e);
+      console.error('Admin fetchAuxData error:', e);
     } finally {
       setLoading(false);
     }
   };
 
-  // Real-time listener on users collection so new Telegram entrants appear immediately
+  // Single real-time listener on users collection (avoids duplicate getDocs reads)
   useEffect(() => {
-    fetchData();
+    fetchAuxData();
 
     const qLive = query(collection(db, 'users'), limit(5000));
     const unsub = onSnapshot(
       qLive,
       (snap) => {
-        processUsersSnapshot(snap.docs, snap.size);
+        processUsersSnapshot(snap.docs);
         setLoading(false);
       },
       (err) => {
         console.warn('Admin live listener warning:', err);
+        setLoading(false);
       }
     );
 
     return () => unsub();
   }, []);
+
+  const handleSaveBotMau = async () => {
+    const parsed = parseInt(mauInput.replace(/[^0-9]/g, ''), 10);
+    if (isNaN(parsed) || parsed < 0) return;
+    triggerHaptic('success');
+    setBotMau(parsed);
+    setIsEditingMau(false);
+    try {
+      await setDoc(
+        doc(db, 'global', 'stats'),
+        { botMau: parsed, lastUpdatedAt: serverTimestamp() },
+        { merge: true }
+      );
+    } catch (e) {}
+  };
 
   const handleWithdrawalStatus = async (id: string, status: 'approved' | 'rejected') => {
     triggerHaptic('medium');
@@ -457,7 +471,6 @@ export const AdminView: React.FC = () => {
       if (sortBy === 'newest') {
         return (b.createdTimestamp || 0) - (a.createdTimestamp || 0);
       }
-      // Default: 'recent' (Last Active)
       return (b.lastActiveTimestamp || 0) - (a.lastActiveTimestamp || 0);
     });
   }, [allUsers, userFilter, search, sortBy]);
@@ -477,6 +490,8 @@ export const AdminView: React.FC = () => {
     if (days < 7) return `${days}d ago`;
     return new Date(timestamp).toLocaleDateString();
   };
+
+  const effectiveBotMau = Math.max(botMau, stats.uniqueUsers);
 
   return (
     <div className="flex flex-col gap-4 pb-16 max-w-5xl mx-auto">
@@ -502,14 +517,14 @@ export const AdminView: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Live Telegram Mini App Entrants · Real-time Firestore Sync
+              Telegram Bot MAU ({effectiveBotMau.toLocaleString()}) · Live Firestore Sync
             </p>
           </div>
         </div>
         <button
           onClick={() => {
             triggerHaptic('light');
-            fetchData();
+            fetchAuxData();
           }}
           disabled={loading}
           className="min-h-[40px] px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
@@ -521,17 +536,50 @@ export const AdminView: React.FC = () => {
 
       {/* Live Verified KPI Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+        {/* Card 1: Official Telegram Bot MAU (4,329+) */}
+        <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-2xs flex flex-col justify-between gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-slate-300 truncate">Telegram Bot MAU</span>
+            <button
+              onClick={() => setIsEditingMau(!isEditingMau)}
+              className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-sky-400 cursor-pointer"
+              title="Sync BotFather MAU"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {isEditingMau ? (
+            <div className="flex items-center gap-1.5 mt-1">
+              <input
+                type="number"
+                value={mauInput}
+                onChange={(e) => setMauInput(e.target.value)}
+                className="w-full bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-xs font-mono font-bold text-white outline-none"
+              />
+              <button
+                onClick={handleSaveBotMau}
+                className="px-2 py-1 bg-[#0088CC] text-white rounded-lg text-[11px] font-bold cursor-pointer"
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div className="text-xl font-extrabold font-mono tabular-nums text-white tracking-tight">
+                {effectiveBotMau.toLocaleString()}
+              </div>
+              <span className="text-[11px] font-medium text-sky-400 block mt-0.5 truncate">
+                BotFather Monthly Users
+              </span>
+            </div>
+          )}
+        </div>
+
         <StatCard
-          icon={<Users className="w-4 h-4 text-[#0088CC]" />}
+          icon={<TrendingUp className="w-4 h-4 text-[#0088CC]" />}
           value={stats.uniqueUsers.toLocaleString()}
-          label="Total Mini App Users"
-          subLabel={`${stats.realTelegramUsers.toLocaleString()} Verified TG Profiles`}
-        />
-        <StatCard
-          icon={<TrendingUp className="w-4 h-4 text-slate-600" />}
-          value={stats.realTelegramUsers.toLocaleString()}
-          label="Telegram Users"
-          subLabel="With TG ID / @Handle"
+          label="Synced DB Profiles"
+          subLabel={`${stats.realTelegramUsers.toLocaleString()} With TG Identity`}
         />
         <StatCard
           icon={<Activity className="w-4 h-4 text-emerald-600" />}
@@ -566,7 +614,7 @@ export const AdminView: React.FC = () => {
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Users Directory ({userFilter === 'telegram' ? stats.realTelegramUsers : stats.uniqueUsers})
+          Synced Users Directory ({userFilter === 'telegram' ? stats.realTelegramUsers : stats.uniqueUsers})
         </button>
         <button
           onClick={() => {
@@ -649,7 +697,7 @@ export const AdminView: React.FC = () => {
 
           {/* Column Header */}
           <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-between border-b border-slate-100 text-[11px] font-bold text-slate-400">
-            <span>Telegram User Identity ({filteredAndSortedUsers.length})</span>
+            <span>Telegram User Identity ({filteredAndSortedUsers.length} synced · {effectiveBotMau.toLocaleString()} Bot MAU)</span>
             <span>Holdings & Referrals</span>
           </div>
 
