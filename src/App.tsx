@@ -53,6 +53,7 @@ import { AdminView } from './components/AdminView';
 import { PresaleHub } from './components/PresaleHub';
 import { SettingsModal } from './components/SettingsModal';
 import { WhitepaperModal } from './components/WhitepaperModal';
+import { AddToHomeScreenSheet } from './components/AddToHomeScreenSheet';
 import { triggerHaptic, initTelegramFullScreen, getTelegramUser, isStrictAdminUser } from './lib/telegram';
 import { Users, ShieldAlert, Gift, Rocket } from 'lucide-react';
 
@@ -1309,6 +1310,10 @@ function App() {
         isOpen={isWhitepaperOpen}
         onClose={() => setIsWhitepaperOpen(false)}
       />
+
+      {!showWelcomeModal && !referralBonusModal?.show && (
+        <AddToHomeScreenSheet />
+      )}
     </div>
   );
 }
