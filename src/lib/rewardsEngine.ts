@@ -15,6 +15,7 @@ export interface GrantRewardOptions {
   firstName?: string | null;
   source: string;
   amount: number;
+  symbol?: string;
   xp?: number;
   balanceType?: 'real' | 'both';
   extraUserUpdates?: Record<string, any>;
@@ -84,10 +85,13 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
     firstName,
     source,
     amount,
+    symbol = 'GRMF',
     xp = 0,
     balanceType = 'both',
     extraUserUpdates = {}
   } = options;
+
+  const tokenSymbol = (symbol || 'GRMF').toUpperCase();
 
   if (!userId || typeof amount !== 'number' || isNaN(amount) || amount < 0) {
     console.error('Invalid grantReward parameters:', { userId, amount });
@@ -110,10 +114,10 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       const profile = JSON.parse(cached);
       if (amount > 0) {
         profile.realBalances = profile.realBalances || {};
-        profile.realBalances.GRMF = (profile.realBalances.GRMF || 0) + amount;
+        profile.realBalances[tokenSymbol] = Number(((profile.realBalances[tokenSymbol] || 0) + amount).toFixed(6));
         if (balanceType === 'both') {
           profile.betaBalances = profile.betaBalances || {};
-          profile.betaBalances.GRMF = (profile.betaBalances.GRMF || 0) + amount;
+          profile.betaBalances[tokenSymbol] = Number(((profile.betaBalances[tokenSymbol] || 0) + amount).toFixed(6));
         }
       }
       if (xp > 0) {
@@ -122,6 +126,12 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       applyDotNotationToObject(profile, extraUserUpdates || {});
 
       localStorage.setItem('grmf_cached_profile', JSON.stringify(profile));
+      if (profile.betaBalances) {
+        localStorage.setItem('grmf_cached_balances', JSON.stringify(profile.betaBalances));
+      }
+      if (tokenSymbol === 'GRMF' && profile.realBalances?.GRMF !== undefined) {
+        localStorage.setItem('grmf_cached_real_grmf', String(profile.realBalances.GRMF));
+      }
       window.dispatchEvent(new CustomEvent('grmf_local_profile_updated', { detail: profile }));
     }
   } catch (e) {
@@ -156,9 +166,9 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
     }
 
     if (amount > 0) {
-      flatUserUpdates['realBalances.GRMF'] = increment(amount);
+      flatUserUpdates[`realBalances.${tokenSymbol}`] = increment(amount);
       if (balanceType === 'both') {
-        flatUserUpdates['betaBalances.GRMF'] = increment(amount);
+        flatUserUpdates[`betaBalances.${tokenSymbol}`] = increment(amount);
       }
     }
 
@@ -189,6 +199,7 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
       source,
       rewardSource: source,
       amount,
+      symbol: tokenSymbol,
       xp: xp || 0,
       timestamp: now,
       createdAt: serverTimestamp()
@@ -218,6 +229,7 @@ export async function grantReward(options: GrantRewardOptions): Promise<GrantRew
           source,
           rewardSource: source,
           amount,
+          symbol: tokenSymbol,
           xp: xp || 0,
           timestamp: now,
           createdAt: serverTimestamp()

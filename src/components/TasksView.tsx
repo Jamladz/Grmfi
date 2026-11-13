@@ -21,6 +21,7 @@ import { grantReward } from '../lib/rewardsEngine';
 import { useHomeScreenShortcut } from '../hooks/useHomeScreenShortcut';
 import { serverTimestamp } from 'firebase/firestore';
 import { openTelegramLink, triggerHaptic } from '../lib/telegram';
+import { TokenSpinReel, SpinPrize } from './TokenSpinReel';
 
 interface TasksViewProps {
   userProfile: any;
@@ -86,8 +87,15 @@ export const TasksView: React.FC<TasksViewProps> = ({
   const [tonConnectUI] = useTonConnectUI();
   const tonWallet = useTonWallet();
   const [activeTab, setActiveTab] = useState<'all' | 'daily' | 'special'>('all');
+  const [isSpinPageOpen, setIsSpinPageOpen] = useState<boolean>(false);
   const [claimingId, setClaimingId] = useState<string | null>(null);
-  const [successModal, setSuccessModal] = useState<{ title: string; amount: number; subtitle?: string } | null>(null);
+  const [successModal, setSuccessModal] = useState<{
+    title: string;
+    amount: number;
+    symbol?: string;
+    logo?: string;
+    subtitle?: string;
+  } | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
   
   const { status: shortcutStatus, addToHomeScreen } = useHomeScreenShortcut();
@@ -102,12 +110,15 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
   const taskProgress = userProfile?.taskProgress || {};
 
-  // Daily Login & Mystery Box 24h states
+  // Daily Login, Mystery Box & Daily Spin 24h states
   const loginEntry = taskProgress['daily_login'] || {};
   const boxEntry = taskProgress['mystery_box'] || {};
+  const spinEntry = taskProgress['daily_spin'] || {};
 
   const loginCooldown = getCooldownState(loginEntry.claimedAt || loginEntry.completedAt, now);
   const boxCooldown = getCooldownState(boxEntry.claimedAt || boxEntry.completedAt, now);
+  const spinCooldown = getCooldownState(spinEntry.claimedAt || spinEntry.completedAt, now);
+  const totalSpinsCount = typeof spinEntry.totalSpins === 'number' && spinEntry.totalSpins > 0 ? spinEntry.totalSpins : 0;
 
   // Calculate active streak count (resets if more than 48h since last check-in)
   const rawStreak = typeof loginEntry.streak === 'number' && loginEntry.streak > 0 ? loginEntry.streak : 0;
@@ -171,11 +182,12 @@ export const TasksView: React.FC<TasksViewProps> = ({
     return { ...task, taskState: 'available' as const };
   });
 
-  // Compute aggregate 24h cycle metrics for the 2 recurring daily tasks
-  const totalDailyCount = 2;
+  // Compute aggregate 24h cycle metrics for the 3 recurring daily features (Check-In, Mystery Box, Free Spin)
+  const totalDailyCount = 3;
   const activeCooldowns = [
     ...(loginCooldown.isCooldown ? [loginCooldown.remainingMs] : []),
-    ...(boxCooldown.isCooldown ? [boxCooldown.remainingMs] : [])
+    ...(boxCooldown.isCooldown ? [boxCooldown.remainingMs] : []),
+    ...(spinCooldown.isCooldown ? [spinCooldown.remainingMs] : [])
   ];
   const completedDailyCount = activeCooldowns.length;
   const availableDailyCount = totalDailyCount - completedDailyCount;
@@ -183,6 +195,60 @@ export const TasksView: React.FC<TasksViewProps> = ({
   const nextRenewalFormatted = nextRenewalMs > 0
     ? getCooldownState(now - (DAILY_COOLDOWN_MS - nextRenewalMs), now).formatted
     : null;
+
+  const handleSpinComplete = async (prize: SpinPrize, mode: 'free_24h' | 'paid_ton') => {
+    const targetId =
+      userProfile?.id ||
+      localStorage.getItem('grmf_persistent_doc_id') ||
+      auth.currentUser?.uid;
+    if (!targetId) return;
+
+    const ts = Date.now();
+    const nextSpinsCount = totalSpinsCount + 1;
+    const extraUpdates: Record<string, any> = {
+      'taskProgress.daily_spin.totalSpins': nextSpinsCount,
+      'taskProgress.daily_spin.lastSpinAt': ts,
+      'taskProgress.daily_spin.lastPrizeSymbol': prize.symbol,
+      'taskProgress.daily_spin.lastPrizeAmount': prize.amount,
+      lastActiveAt: serverTimestamp()
+    };
+
+    if (mode === 'free_24h') {
+      extraUpdates['taskProgress.daily_spin.status'] = 'completed';
+      extraUpdates['taskProgress.daily_spin.completedAt'] = ts;
+      extraUpdates['taskProgress.daily_spin.claimedAt'] = ts;
+    }
+
+    try {
+      const res = await grantReward({
+        userId: targetId,
+        telegramId: userProfile?.telegramId,
+        username: userProfile?.username || userProfile?.telegramUsername,
+        firstName: userProfile?.firstName,
+        source: mode === 'free_24h' ? `spin_free_${prize.symbol}` : `spin_ton_${prize.symbol}`,
+        amount: prize.amount,
+        symbol: prize.symbol,
+        xp: prize.xp,
+        balanceType: 'both',
+        extraUserUpdates: extraUpdates
+      });
+
+      if (res.success) {
+        setSuccessModal({
+          title: mode === 'paid_ton' ? '0.1 TON Spin Jackpot!' : 'Daily Token Spin Won!',
+          amount: prize.amount,
+          symbol: prize.symbol,
+          logo: prize.logo,
+          subtitle:
+            mode === 'paid_ton'
+              ? `0.1 TON verified! +${prize.amount} ${prize.symbol} credited to your Global Assets.`
+              : `+${prize.amount} ${prize.symbol} credited! Next free spin unlocks in 24:00:00.`
+        });
+      }
+    } catch (err) {
+      console.error('Failed to credit spin reward:', err);
+    }
+  };
 
   const handleClaimTask = async (
     taskId: string,
@@ -208,6 +274,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
         firstName: userProfile?.firstName,
         source: sourceName,
         amount: rewardAmount,
+        symbol: 'GRMF',
         xp: xpAmount,
         balanceType: 'both',
         extraUserUpdates: {
@@ -223,6 +290,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
                  taskId === 'daily_login' ? 'On-Chain Daily Check-In Claimed!' : 
                  taskId === 'mystery_box' ? 'Mystery Box Opened!' : 'Mission Reward Claimed!',
           amount: rewardAmount,
+          symbol: 'GRMF',
           subtitle
         });
       }
@@ -371,84 +439,152 @@ export const TasksView: React.FC<TasksViewProps> = ({
       exit={{ opacity: 0, y: -8 }}
       className="flex flex-col gap-4 pb-8"
     >
-      {/* Header & 24h Renewal Cycle Overview Card */}
-      <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
-              Reward Missions
-            </h1>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Complete daily check-ins, DEX swaps & partner missions
-            </p>
-          </div>
-          <div className="text-right">
-            <span className="text-[11px] font-semibold text-slate-400 block">Balance</span>
-            <span className="text-base font-extrabold font-mono tabular-nums text-slate-900">
-              {(userProfile?.realBalances?.GRMF || 0).toLocaleString()} <span className="text-xs text-[#0088CC]">GRMF</span>
-            </span>
-          </div>
-        </div>
-
-        {/* 24h Status Strip */}
-        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/60 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-sky-50 text-[#0088CC] flex items-center justify-center shrink-0">
-              <RefreshCw className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900">
-                <span className="font-mono tabular-nums">{availableDailyCount}/{totalDailyCount} Daily Ready</span>
-                <span className="text-slate-300">·</span>
-                <span className="text-amber-600 font-mono tabular-nums">
-                  Day {Math.max(1, activeStreak)} Streak
+      {isSpinPageOpen ? (
+        <TokenSpinReel
+          spinCooldown={spinCooldown}
+          totalSpinsCount={totalSpinsCount}
+          treasuryAddress={TREASURY_ADDRESS}
+          userBalances={userProfile?.realBalances || userProfile?.betaBalances || {}}
+          onBack={() => setIsSpinPageOpen(false)}
+          onSpinComplete={handleSpinComplete}
+        />
+      ) : (
+        <>
+          {/* Header & 24h Renewal Cycle Overview Card */}
+          <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                  Reward Missions
+                </h1>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                  Complete daily check-ins, token spins & DEX swaps
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-[11px] font-semibold text-slate-400 block">Balance</span>
+                <span className="text-base font-extrabold font-mono tabular-nums text-slate-900">
+                  {(userProfile?.realBalances?.GRMF || 0).toLocaleString()} <span className="text-xs text-[#0088CC]">GRMF</span>
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium truncate mt-0.5">
-                {nextRenewalFormatted ? (
-                  <>
-                    Next daily reset in <span className="font-mono tabular-nums font-bold text-slate-700">{nextRenewalFormatted}</span>
-                  </>
-                ) : (
-                  'All 24h daily missions are ready to claim'
-                )}
-              </p>
+            </div>
+
+            {/* 24h Status Strip */}
+            <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/60 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-sky-50 text-[#0088CC] flex items-center justify-center shrink-0">
+                  <RefreshCw className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900">
+                    <span className="font-mono tabular-nums">{availableDailyCount}/{totalDailyCount} Daily Ready</span>
+                    <span className="text-slate-300">·</span>
+                    <span className="text-amber-600 font-mono tabular-nums">
+                      Day {Math.max(1, activeStreak)} Streak
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-medium truncate mt-0.5">
+                    {nextRenewalFormatted ? (
+                      <>
+                        Next daily reset in <span className="font-mono tabular-nums font-bold text-slate-700">{nextRenewalFormatted}</span>
+                      </>
+                    ) : (
+                      'All 24h daily missions are ready to claim'
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-right shrink-0">
+                <span className="text-[10px] font-semibold text-slate-400 block">Daily Pool</span>
+                <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+135 GRMF/24h</span>
+              </div>
             </div>
           </div>
 
-          <div className="text-right shrink-0">
-            <span className="text-[10px] font-semibold text-slate-400 block">Daily Pool</span>
-            <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+135 GRMF/24h</span>
+          {/* Interactive Segmented Control */}
+          <div className="flex bg-slate-200/70 p-1 rounded-2xl">
+            {[
+              { id: 'all', label: 'All Missions' },
+              { id: 'daily', label: `Daily & Spin (${availableDailyCount})` },
+              { id: 'special', label: 'One-Time & Swap' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  triggerHaptic('light');
+                  setActiveTab(tab.id as any);
+                }}
+                className={`flex-1 min-h-[38px] py-2 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+                  activeTab === tab.id 
+                    ? 'bg-white text-slate-900 shadow-xs' 
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-        </div>
-      </div>
 
-      {/* Interactive Segmented Control */}
-      <div className="flex bg-slate-200/70 p-1 rounded-2xl">
-        {[
-          { id: 'all', label: 'All Missions' },
-          { id: 'daily', label: `Daily 24h (${availableDailyCount})` },
-          { id: 'special', label: 'One-Time & Swap' },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => {
-              triggerHaptic('light');
-              setActiveTab(tab.id as any);
-            }}
-            className={`flex-1 min-h-[38px] py-2 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === tab.id 
-                ? 'bg-white text-slate-900 shadow-xs' 
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Unified Task List Surface */}
-      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
+          {/* Unified Task List Surface */}
+          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
+            {/* Daily Entry 0: Ecosystem Token Spin Page Entry (Opens Dedicated Spin Page) */}
+            {(activeTab === 'all' || activeTab === 'daily') && (
+              <div
+                onClick={() => {
+                  triggerHaptic('light');
+                  setIsSpinPageOpen(true);
+                }}
+                className="p-4 flex items-center justify-between gap-3.5 hover:bg-sky-50/40 transition-colors cursor-pointer"
+              >
+                <div className="w-11 h-11 rounded-2xl bg-sky-50 text-[#0088CC] border border-sky-100 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-sm font-bold text-slate-900 truncate">
+                      Ecosystem Token Spin
+                    </h4>
+                    <span className="text-[10px] font-extrabold font-mono uppercase px-1.5 py-0.5 rounded-md bg-sky-50 text-[#0088CC] border border-sky-200/60">
+                      6 Tokens
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
+                    {!spinCooldown.isCooldown ? (
+                      <span className="font-bold text-emerald-600">Free 24h Spin Ready</span>
+                    ) : (
+                      <span className="font-mono tabular-nums text-slate-600 font-semibold">
+                        Free in {spinCooldown.formatted}
+                      </span>
+                    )}
+                    <span className="mx-1.5 text-slate-300">·</span>
+                    <span className="font-mono tabular-nums text-[#0088CC] font-semibold">0.1 TON Spin</span>
+                  </p>
+                  {spinCooldown.isCooldown && (
+                    <div className="w-full max-w-[160px] h-1 bg-slate-100 rounded-full overflow-hidden mt-1.5">
+                      <div
+                        className="h-full bg-[#0088CC] rounded-full transition-all duration-500"
+                        style={{ width: `${spinCooldown.progressPct}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      triggerHaptic('light');
+                      setIsSpinPageOpen(true);
+                    }}
+                    className="min-h-[40px] bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold text-xs px-3.5 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <span>{!spinCooldown.isCooldown ? 'Free Spin' : 'Open Spin'}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
         {/* Daily Task 1: On-Chain Daily Check-In (0.05 TON -> +100 GRMF, Renews every 24h) */}
         {(activeTab === 'all' || activeTab === 'daily') && (
           <div className="p-4 flex items-center justify-between gap-3.5 hover:bg-slate-50/60 transition-colors">
@@ -736,6 +872,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* Success Modal */}
       <AnimatePresence>
@@ -747,8 +885,16 @@ export const TasksView: React.FC<TasksViewProps> = ({
               exit={{ scale: 0.92, opacity: 0, y: 12 }}
               className="bg-white rounded-3xl p-6 max-w-xs w-full text-center shadow-2xl border border-slate-100"
             >
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4">
-                <PartyPopper className="w-7 h-7" />
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4 overflow-hidden">
+                {successModal.logo ? (
+                  <img
+                    src={successModal.logo}
+                    alt={successModal.symbol || 'Token'}
+                    className="w-9 h-9 rounded-full object-cover"
+                  />
+                ) : (
+                  <PartyPopper className="w-7 h-7" />
+                )}
               </div>
 
               <h3 className="text-base font-extrabold text-slate-900 mb-1">
@@ -759,9 +905,17 @@ export const TasksView: React.FC<TasksViewProps> = ({
               </p>
 
               <div className="bg-slate-50 rounded-2xl py-3 px-4 border border-slate-200/60 mb-5 flex items-center justify-center gap-2">
-                <Coins className="w-5 h-5 text-emerald-600" />
+                {successModal.logo ? (
+                  <img
+                    src={successModal.logo}
+                    alt={successModal.symbol || 'Token'}
+                    className="w-5 h-5 rounded-full object-cover"
+                  />
+                ) : (
+                  <Coins className="w-5 h-5 text-emerald-600" />
+                )}
                 <span className="text-lg font-extrabold font-mono tabular-nums text-slate-900">
-                  +{successModal.amount.toLocaleString()} GRMF
+                  +{successModal.amount.toLocaleString()} {successModal.symbol || 'GRMF'}
                 </span>
               </div>
 
