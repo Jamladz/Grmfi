@@ -54,6 +54,7 @@ import { PresaleHub } from './components/PresaleHub';
 import { SettingsModal } from './components/SettingsModal';
 import { WhitepaperModal } from './components/WhitepaperModal';
 import { AddToHomeScreenSheet } from './components/AddToHomeScreenSheet';
+import { SpecialOfferSheet } from './components/SpecialOfferSheet';
 import { triggerHaptic, initTelegramFullScreen, getTelegramUser, isStrictAdminUser } from './lib/telegram';
 import { Users, ShieldAlert, Gift, Rocket } from 'lucide-react';
 
@@ -192,6 +193,8 @@ function App() {
   const [selectingSide, setSelectingSide] = useState<'from' | 'to' | null>(null);
   const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [isWhitepaperOpen, setIsWhitepaperOpen] = useState(false);
+  const [isSpecialOfferOpen, setIsSpecialOfferOpen] = useState(true);
+  const [openFlashMissionOnLoad, setOpenFlashMissionOnLoad] = useState(false);
   const [txState, setTxState] = useState<TransactionState>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
   const [appError, setAppError] = useState<string | null>(null);
@@ -992,12 +995,14 @@ function App() {
     setIsSettingsOpen(false);
     setIsWhitepaperOpen(false);
     setIsTokenSelectOpen(false);
+    setIsSpecialOfferOpen(false);
   };
 
   const openWalletSheet = () => {
     setIsSettingsOpen(false);
     setIsWhitepaperOpen(false);
     setIsTokenSelectOpen(false);
+    setIsSpecialOfferOpen(false);
     setIsWalletOpen(true);
   };
 
@@ -1005,6 +1010,7 @@ function App() {
     setIsWalletOpen(false);
     setIsWhitepaperOpen(false);
     setIsTokenSelectOpen(false);
+    setIsSpecialOfferOpen(false);
     setIsSettingsOpen(true);
   };
 
@@ -1012,6 +1018,7 @@ function App() {
     setIsWalletOpen(false);
     setIsSettingsOpen(false);
     setIsTokenSelectOpen(false);
+    setIsSpecialOfferOpen(false);
     setIsWhitepaperOpen(true);
   };
 
@@ -1019,6 +1026,7 @@ function App() {
     setIsWalletOpen(false);
     setIsSettingsOpen(false);
     setIsWhitepaperOpen(false);
+    setIsSpecialOfferOpen(false);
     setSelectingSide(side);
     setIsTokenSelectOpen(true);
   };
@@ -1028,9 +1036,20 @@ function App() {
     setActiveView(nextView);
   };
 
+  const shouldShowSpecialOffer =
+    isSpecialOfferOpen &&
+    !showWelcomeModal &&
+    !referralBonusModal?.show &&
+    !isWalletOpen &&
+    !isSettingsOpen &&
+    !isWhitepaperOpen &&
+    !isTokenSelectOpen &&
+    txState === 'idle';
+
   const isAnyOverlayOpen =
     showWelcomeModal ||
     Boolean(referralBonusModal?.show) ||
+    shouldShowSpecialOffer ||
     isWalletOpen ||
     isSettingsOpen ||
     isWhitepaperOpen ||
@@ -1143,6 +1162,8 @@ function App() {
               <TasksView 
                 userProfile={userProfile} 
                 setActiveView={switchView}
+                initialOpenFlashMission={openFlashMissionOnLoad}
+                onClearInitialFlashMission={() => setOpenFlashMissionOnLoad(false)}
                 onSelectSwapPair={(toSymbol: string) => {
                   const grmfToken = TOKENS.find(t => t.symbol === 'GRMF') || TOKENS[0];
                   const targetToken = TOKENS.find(t => t.symbol.toUpperCase() === toSymbol.toUpperCase());
@@ -1400,6 +1421,17 @@ function App() {
       <WhitepaperModal
         isOpen={isWhitepaperOpen}
         onClose={() => setIsWhitepaperOpen(false)}
+      />
+
+      <SpecialOfferSheet
+        isOpen={shouldShowSpecialOffer}
+        onClose={() => setIsSpecialOfferOpen(false)}
+        onGoToMission={() => {
+          setIsSpecialOfferOpen(false);
+          setOpenFlashMissionOnLoad(true);
+          switchView('tasks');
+        }}
+        userProfile={userProfile}
       />
 
       {!isAnyOverlayOpen && (

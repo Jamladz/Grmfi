@@ -368,6 +368,7 @@ export const processReferral = async (
         {
           referralsCount: increment(1),
           inviteCount: increment(1),
+          flashInvite5NewCount: increment(1),
           earnedReferralCoins: increment(referrerReward),
           xp: increment(isPremiumFriend ? 300 : 150),
           lastReferralAt: serverTimestamp(),

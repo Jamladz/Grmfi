@@ -12,7 +12,13 @@ import {
   PartyPopper,
   RefreshCw,
   Zap,
-  Bot
+  Bot,
+  Users,
+  Share2,
+  Copy,
+  Check,
+  ShieldAlert,
+  Clock
 } from 'lucide-react';
 import { useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
 import { toNano } from '@ton/core';
@@ -20,17 +26,22 @@ import { auth } from '../lib/firebase';
 import { grantReward } from '../lib/rewardsEngine';
 import { useHomeScreenShortcut } from '../hooks/useHomeScreenShortcut';
 import { serverTimestamp } from 'firebase/firestore';
-import { openTelegramLink, triggerHaptic } from '../lib/telegram';
+import { openTelegramLink, triggerHaptic, getTelegramUser } from '../lib/telegram';
 import { TokenSpinReel, SpinPrize } from './TokenSpinReel';
+import { FlashReferralMissionPage } from './FlashReferralMissionPage';
+import { getTenDayOfferCountdown } from './SpecialOfferSheet';
 
 interface TasksViewProps {
   userProfile: any;
   setActiveView: (view: any) => void;
   onSelectSwapPair?: (toSymbol: string) => void;
+  initialOpenFlashMission?: boolean;
+  onClearInitialFlashMission?: () => void;
 }
 
 const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000; // Exact 24 hours in milliseconds
 const TREASURY_ADDRESS = 'UQAJcp9v_CqgdqHmAjs8sZRs0UPkQgZBuWct2AfMBJfgP6QS';
+const BOT_MINIAPP_BASE_URL = 'https://t.me/Grmf_fibot/Grmf';
 
 function sanitizeTimestamp(val: any, now: number): number {
   if (typeof val !== 'number' || isNaN(val) || val <= 0) return 0;
@@ -82,12 +93,15 @@ function getCooldownState(rawTimestamp: any, now: number) {
 export const TasksView: React.FC<TasksViewProps> = ({
   userProfile,
   setActiveView,
-  onSelectSwapPair
+  onSelectSwapPair,
+  initialOpenFlashMission,
+  onClearInitialFlashMission
 }) => {
   const [tonConnectUI] = useTonConnectUI();
   const tonWallet = useTonWallet();
   const [activeTab, setActiveTab] = useState<'all' | 'daily' | 'special'>('all');
   const [isSpinPageOpen, setIsSpinPageOpen] = useState<boolean>(false);
+  const [isFlashMissionPageOpen, setIsFlashMissionPageOpen] = useState<boolean>(Boolean(initialOpenFlashMission));
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [successModal, setSuccessModal] = useState<{
     title: string;
@@ -100,7 +114,15 @@ export const TasksView: React.FC<TasksViewProps> = ({
   
   const { status: shortcutStatus, addToHomeScreen } = useHomeScreenShortcut();
 
-  // Live 1-second precision clock for 24h daily task timers
+  useEffect(() => {
+    if (initialOpenFlashMission) {
+      setIsSpinPageOpen(false);
+      setIsFlashMissionPageOpen(true);
+      onClearInitialFlashMission?.();
+    }
+  }, [initialOpenFlashMission, onClearInitialFlashMission]);
+
+  // Live 1-second precision clock for 24h daily task timers & 10-day special offer countdown
   useEffect(() => {
     const interval = setInterval(() => {
       setNow(Date.now());
@@ -108,7 +130,29 @@ export const TasksView: React.FC<TasksViewProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  const offerFormatted = getTenDayOfferCountdown(now);
+
   const taskProgress = userProfile?.taskProgress || {};
+
+  // Strict Separate 5-Friends 60,000 GRMF Mission State:
+  // Pre-existing referrals in referralsCount / inviteCount are NEVER counted toward this mission.
+  const existingReferralsCount = Math.max(
+    Number(userProfile?.referralsCount) || 0,
+    Number(userProfile?.inviteCount) || 0,
+    Array.isArray(userProfile?.invitedUsers) ? userProfile.invitedUsers.length : 0
+  );
+  const newMissionInvites = Math.min(5, Math.max(0, Number(userProfile?.flashInvite5NewCount) || 0));
+  const flashInvite5Status = taskProgress['flash_invite_5_60k']?.status;
+  const isFlashInvite5Claimed = flashInvite5Status === 'claimed' || flashInvite5Status === 'completed';
+  const isFlashInvite5Ready = newMissionInvites >= 5 && !isFlashInvite5Claimed;
+
+  const tgUser = getTelegramUser();
+  const canonicalRefCode = tgUser?.id
+    ? `tg_${tgUser.id}`
+    : userProfile?.telegramId
+      ? `tg_${userProfile.telegramId}`
+      : userProfile?.id || auth.currentUser?.uid || 'user';
+  const personalInviteLink = `${BOT_MINIAPP_BASE_URL}?startapp=${encodeURIComponent(canonicalRefCode)}`;
 
   // Daily Login, Mystery Box & Daily Spin 24h states
   const loginEntry = taskProgress['daily_login'] || {};
@@ -432,6 +476,23 @@ export const TasksView: React.FC<TasksViewProps> = ({
     );
   };
 
+  const handleClaimFlashInvite5 = async () => {
+    if (newMissionInvites < 5 || isFlashInvite5Claimed) return;
+    const ts = Date.now();
+    await handleClaimTask(
+      'flash_invite_5_60k',
+      60000,
+      500,
+      'task_flash_invite_5_60k',
+      {
+        'taskProgress.flash_invite_5_60k.status': 'claimed',
+        'taskProgress.flash_invite_5_60k.claimedAt': ts,
+        'taskProgress.flash_invite_5_60k.completedAt': ts
+      },
+      'Special 5-Friends Flash Mission completed! +60,000 GRMF credited to your balance.'
+    );
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 8 }}
@@ -447,6 +508,17 @@ export const TasksView: React.FC<TasksViewProps> = ({
           userBalances={userProfile?.realBalances || userProfile?.betaBalances || {}}
           onBack={() => setIsSpinPageOpen(false)}
           onSpinComplete={handleSpinComplete}
+        />
+      ) : isFlashMissionPageOpen ? (
+        <FlashReferralMissionPage
+          newMissionInvites={newMissionInvites}
+          existingReferralsCount={existingReferralsCount}
+          isClaimed={isFlashInvite5Claimed}
+          isClaiming={claimingId === 'flash_invite_5_60k'}
+          offerFormatted={offerFormatted}
+          personalInviteLink={personalInviteLink}
+          onBack={() => setIsFlashMissionPageOpen(false)}
+          onClaim={handleClaimFlashInvite5}
         />
       ) : (
         <>
@@ -499,6 +571,63 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 <span className="text-[10px] font-semibold text-slate-400 block">Daily Pool</span>
                 <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+135 GRMF/24h</span>
               </div>
+            </div>
+          </div>
+
+          {/* CLICKABLE SEPARATE ENTRY CARD: Opens Dedicated 5-Friends 60,000 GRMF Mission Page */}
+          <div
+            onClick={() => {
+              triggerHaptic('light');
+              setIsFlashMissionPageOpen(true);
+            }}
+            className="bg-slate-900 text-white rounded-3xl p-4 border border-slate-800 shadow-md relative overflow-hidden cursor-pointer hover:bg-slate-900/95 transition-all active:scale-[0.99]"
+          >
+            <div className="absolute -top-12 -right-12 w-36 h-36 bg-amber-500/15 rounded-full blur-2xl pointer-events-none" />
+            <div className="absolute -bottom-12 -left-12 w-36 h-36 bg-[#0088CC]/20 rounded-full blur-2xl pointer-events-none" />
+
+            <div className="flex items-center justify-between gap-2 mb-2.5 relative z-10">
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-400/30 text-amber-300 text-[10px] font-extrabold uppercase tracking-wider">
+                <Flame className="w-3 h-3 text-amber-400 fill-amber-400 animate-pulse" />
+                <span>Special Flash Offer • Ending Soon</span>
+              </span>
+
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/20 border border-rose-400/30 text-rose-200 text-[10px] font-mono tabular-nums font-bold">
+                <Clock className="w-3 h-3 text-rose-400" />
+                <span>{offerFormatted}</span>
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 relative z-10">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-2xl bg-amber-400/15 border border-amber-400/30 text-amber-400 flex items-center justify-center shrink-0">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-extrabold text-white truncate">
+                    Invite 5 Friends • +60,000 GRMF
+                  </h3>
+                  <p className="text-xs text-slate-300 font-medium mt-0.5 truncate">
+                    <span className="font-mono tabular-nums text-amber-400 font-bold">
+                      {newMissionInvites}/5 New Friends
+                    </span>
+                    <span className="mx-1.5 text-slate-600">·</span>
+                    <span>Existing referrals not counted</span>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerHaptic('light');
+                  setIsFlashMissionPageOpen(true);
+                }}
+                className="shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+              >
+                <span>{isFlashInvite5Claimed ? 'Claimed' : isFlashInvite5Ready ? 'Claim 60K' : 'Open Mission'}</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
