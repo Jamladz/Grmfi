@@ -22,8 +22,6 @@ export const TokenSelectModal: React.FC<TokenSelectModalProps> = ({
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
-  if (!isOpen) return null;
-
   const filteredTokens = TOKENS.filter((token) => {
     const matchesSearch =
       token.symbol.toLowerCase().includes(search.toLowerCase()) ||
@@ -41,24 +39,25 @@ export const TokenSelectModal: React.FC<TokenSelectModalProps> = ({
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[120] flex items-end justify-center">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
             onClick={onClose}
-            className="absolute inset-0"
+            className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs"
           />
           <motion.div
-            initial={{ y: "100%" }}
+            initial={{ y: '100%' }}
             animate={{ y: 0 }}
-            exit={{ y: "100%" }}
-            transition={{ type: "spring", damping: 30, stiffness: 250 }}
-            className="relative w-full max-w-md bg-white rounded-t-[40px] shadow-[0_-20px_60px_-10px_rgba(0,0,0,0.2)] overflow-hidden flex flex-col h-[75dvh] z-50"
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}
+            className="relative w-full max-w-xl bg-white rounded-t-[32px] shadow-2xl border-t border-slate-200/80 overflow-hidden flex flex-col h-[78dvh] max-h-[78dvh] z-10 will-change-transform"
           >
             {/* Minimal Handle */}
-            <div className="absolute top-0 left-0 right-0 h-10 flex items-start justify-center pt-4 pointer-events-none z-30">
-              <div className="w-10 h-1 bg-slate-100 rounded-full" />
+            <div className="pt-3 pb-1 flex items-center justify-center shrink-0">
+              <div className="w-11 h-1.5 bg-slate-200 rounded-full" />
             </div>
 
             {/* Header */}

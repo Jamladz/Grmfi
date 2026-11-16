@@ -19,7 +19,9 @@ import {
   claimMilestone,
   getReferredFriends,
   STANDARD_REFERRER_REWARD,
-  PREMIUM_REFERRER_REWARD
+  PREMIUM_REFERRER_REWARD,
+  STANDARD_FRIEND_WELCOME,
+  PREMIUM_FRIEND_WELCOME
 } from '../lib/referrals';
 import { auth, db } from '../lib/firebase';
 import { collection, query, limit, getDocs, onSnapshot, where } from 'firebase/firestore';
@@ -172,7 +174,7 @@ export const ReferralHub: React.FC<ReferralHubProps> = ({ userProfile }) => {
 
   const handleShare = () => {
     triggerHaptic('medium');
-    const text = `Join me on GRMF Fi Mini App! Claim your +100 GRMF Welcome Bonus & start earning on TON 🚀`;
+    const text = `Join me on GRMF Fi Mini App! Claim your +${STANDARD_FRIEND_WELCOME.toLocaleString()} GRMF Invite Bonus & +4,000 GRMF Starter Gift on TON 🚀`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(text)}`;
     openTelegramLink(shareUrl);
   };
@@ -214,11 +216,16 @@ export const ReferralHub: React.FC<ReferralHubProps> = ({ userProfile }) => {
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-2xs">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
-              Invite Friends & Earn
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                Invite Friends & Earn
+              </h1>
+              <span className="text-[10px] font-extrabold font-mono uppercase px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                10x Boosted
+              </span>
+            </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5 leading-relaxed">
-              Instant rewards credited automatically when friends open the Mini App
+              Earn +{STANDARD_REFERRER_REWARD.toLocaleString()} GRMF per friend & +{PREMIUM_REFERRER_REWARD.toLocaleString()} GRMF per Telegram Premium friend
             </p>
           </div>
           <div className="w-11 h-11 rounded-2xl bg-sky-50 text-[#0088CC] flex items-center justify-center shrink-0">
@@ -255,26 +262,30 @@ export const ReferralHub: React.FC<ReferralHubProps> = ({ userProfile }) => {
 
         {/* Reward Tiers Breakdown */}
         <div className="grid grid-cols-2 gap-2 mb-4">
-          <div className="rounded-2xl bg-slate-50 px-3 py-2.5 border border-slate-200/60 flex items-center justify-between">
-            <div>
-              <span className="text-[11px] font-bold text-slate-700 block">Standard Friend</span>
-              <span className="text-[10px] text-slate-400 font-medium">Friend gets +100</span>
+          <div className="rounded-2xl bg-slate-50 px-3 py-2.5 border border-slate-200/60 flex items-center justify-between gap-1">
+            <div className="min-w-0">
+              <span className="text-[11px] font-bold text-slate-700 block truncate">Standard Friend</span>
+              <span className="text-[10px] text-slate-400 font-medium block truncate">
+                Friend gets +{STANDARD_FRIEND_WELCOME.toLocaleString()}
+              </span>
             </div>
-            <span className="text-xs font-mono tabular-nums font-extrabold text-[#0088CC]">
-              +{STANDARD_REFERRER_REWARD} GRMF
+            <span className="text-xs font-mono tabular-nums font-extrabold text-[#0088CC] shrink-0">
+              +{STANDARD_REFERRER_REWARD.toLocaleString()}
             </span>
           </div>
 
-          <div className="rounded-2xl bg-amber-50/60 px-3 py-2.5 border border-amber-200/60 flex items-center justify-between">
-            <div>
-              <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1">
-                <span>TG Premium</span>
-                <Sparkles className="w-3 h-3 text-amber-500" />
+          <div className="rounded-2xl bg-amber-50/60 px-3 py-2.5 border border-amber-200/60 flex items-center justify-between gap-1">
+            <div className="min-w-0">
+              <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1 truncate">
+                <span className="truncate">TG Premium</span>
+                <Sparkles className="w-3 h-3 text-amber-500 shrink-0" />
               </span>
-              <span className="text-[10px] text-amber-700/80 font-medium">Friend gets +200</span>
+              <span className="text-[10px] text-amber-700/80 font-medium block truncate">
+                Friend gets +{PREMIUM_FRIEND_WELCOME.toLocaleString()}
+              </span>
             </div>
-            <span className="text-xs font-mono tabular-nums font-extrabold text-amber-600">
-              +{PREMIUM_REFERRER_REWARD} GRMF
+            <span className="text-xs font-mono tabular-nums font-extrabold text-amber-600 shrink-0">
+              +{PREMIUM_REFERRER_REWARD.toLocaleString()}
             </span>
           </div>
         </div>

@@ -24,17 +24,18 @@ export interface Milestone {
 }
 
 export const REFERRAL_MILESTONES: Milestone[] = [
-  { id: 'ref_1', targetCount: 1, rewardCoins: 150, title: 'First Invite' },
-  { id: 'ref_3', targetCount: 3, rewardCoins: 500, title: '3 Friends Joined' },
-  { id: 'ref_5', targetCount: 5, rewardCoins: 1000, title: '5 Friends Joined' },
-  { id: 'ref_10', targetCount: 10, rewardCoins: 2500, title: '10 Friends Joined' },
-  { id: 'ref_25', targetCount: 25, rewardCoins: 7000, title: '25 Friends Ambassador' },
+  { id: 'ref_1', targetCount: 1, rewardCoins: 1500, title: 'First Invite Bonus' },
+  { id: 'ref_3', targetCount: 3, rewardCoins: 5000, title: '3 Friends Joined' },
+  { id: 'ref_5', targetCount: 5, rewardCoins: 10000, title: '5 Friends Network' },
+  { id: 'ref_10', targetCount: 10, rewardCoins: 25000, title: '10 Friends Influencer' },
+  { id: 'ref_25', targetCount: 25, rewardCoins: 75000, title: '25 Friends Ambassador' },
+  { id: 'ref_50', targetCount: 50, rewardCoins: 200000, title: '50 Friends Global Partner' },
 ];
 
-export const STANDARD_REFERRER_REWARD = 250;
-export const PREMIUM_REFERRER_REWARD = 500;
-export const STANDARD_FRIEND_WELCOME = 100;
-export const PREMIUM_FRIEND_WELCOME = 200;
+export const STANDARD_REFERRER_REWARD = 2500;
+export const PREMIUM_REFERRER_REWARD = 5000;
+export const STANDARD_FRIEND_WELCOME = 1000;
+export const PREMIUM_FRIEND_WELCOME = 2500;
 
 /**
  * Normalizes a raw start_param / referral parameter into a canonical referrer code.
@@ -368,7 +369,7 @@ export const processReferral = async (
           referralsCount: increment(1),
           inviteCount: increment(1),
           earnedReferralCoins: increment(referrerReward),
-          xp: increment(isPremiumFriend ? 100 : 50),
+          xp: increment(isPremiumFriend ? 300 : 150),
           lastReferralAt: serverTimestamp(),
           lastReferralTimestamp: nowTs,
           realBalances: {

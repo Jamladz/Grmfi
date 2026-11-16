@@ -35,8 +35,6 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [successAchievement, setSuccessAchievement] = useState<Achievement | null>(null);
 
-  if (!isOpen) return null;
-
   // Extract user metrics from profile
   const inviteCount = Math.max(userProfile?.referralsCount || 0, userProfile?.inviteCount || 0, userProfile?.invitedUsers?.length || 0);
   const realGrmf = userProfile?.realBalances?.GRMF || 0;
@@ -189,14 +187,26 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-md p-0 sm:p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 50 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 50 }}
-        className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl relative border border-slate-100 max-h-[85vh] flex flex-col"
-      >
-        {/* Header */}
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-slate-950/65 backdrop-blur-xs"
+          />
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}
+            className="w-full max-w-xl bg-white rounded-t-[32px] sm:rounded-3xl p-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,16px))] shadow-2xl relative border-t sm:border border-slate-200/80 h-[82dvh] max-h-[82dvh] flex flex-col z-10 will-change-transform"
+          >
+            <div className="w-11 h-1.5 bg-slate-200 rounded-full mx-auto mb-3 shrink-0 sm:hidden" />
+            {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-4 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-400 to-yellow-500 flex items-center justify-center text-white shadow-md shadow-amber-500/20">
@@ -361,6 +371,8 @@ export const AchievementsModal: React.FC<AchievementsModalProps> = ({
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 };

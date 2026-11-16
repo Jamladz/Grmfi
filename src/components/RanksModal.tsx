@@ -10,28 +10,30 @@ interface RanksModalProps {
 }
 
 export const RanksModal: React.FC<RanksModalProps> = ({ isOpen, onClose, userProfile }) => {
-  if (!isOpen) return null;
-
   const totalXp = getUserTotalXp(userProfile);
   const { currentRank } = getUserLevelInfo(totalXp);
 
   return (
     <AnimatePresence>
-      <div 
-        className="fixed inset-0 z-[120] flex items-end justify-center bg-slate-950/75 backdrop-blur-sm sm:items-center sm:p-4"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onClose();
-        }}
-      >
-        <motion.div
-          initial={{ y: '100%', opacity: 0 }}
-          animate={{ y: '0%', opacity: 1 }}
-          exit={{ y: '100%', opacity: 0 }}
-          transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-          className="w-full max-w-md bg-white rounded-t-[36px] sm:rounded-[36px] p-5 pb-6 text-slate-900 shadow-2xl relative overflow-hidden border-t sm:border border-amber-200/60 h-[75vh] max-h-[75vh] flex flex-col justify-between"
-        >
-          {/* Top Pull Handle */}
-          <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-2 shrink-0" />
+      {isOpen && (
+        <div className="fixed inset-0 z-[120] flex items-end justify-center sm:items-center sm:p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-slate-950/65 backdrop-blur-xs"
+          />
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}
+            className="w-full max-w-xl bg-white rounded-t-[32px] sm:rounded-[32px] p-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,16px))] text-slate-900 shadow-2xl relative overflow-hidden border-t sm:border border-slate-200/80 h-[80dvh] max-h-[80dvh] flex flex-col justify-between z-10 will-change-transform"
+          >
+            {/* Top Pull Handle */}
+            <div className="w-11 h-1.5 bg-slate-200 rounded-full mx-auto mb-2 shrink-0" />
 
           {/* Header */}
           <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
@@ -138,6 +140,7 @@ export const RanksModal: React.FC<RanksModalProps> = ({ isOpen, onClose, userPro
           </button>
         </motion.div>
       </div>
+      )}
     </AnimatePresence>
   );
 };

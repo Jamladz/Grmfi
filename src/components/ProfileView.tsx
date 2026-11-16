@@ -53,6 +53,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
 
   const readyCount = checkUnlocked.filter(item => item.unlocked && !claimedMap[item.id]).length;
 
+  const openRanksSheet = () => {
+    triggerHaptic('light');
+    setIsAchievementsOpen(false);
+    setIsWhitepaperOpen(false);
+    setIsRanksOpen(true);
+  };
+
+  const openAchievementsSheet = () => {
+    triggerHaptic('light');
+    setIsRanksOpen(false);
+    setIsWhitepaperOpen(false);
+    setIsAchievementsOpen(true);
+  };
+
+  const openWhitepaperSheet = () => {
+    triggerHaptic('light');
+    setIsRanksOpen(false);
+    setIsAchievementsOpen(false);
+    setIsWhitepaperOpen(true);
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 8 }}
@@ -92,10 +113,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
 
       {/* Rank & XP Progression Card */}
       <div 
-        onClick={() => {
-          triggerHaptic('light');
-          setIsRanksOpen(true);
-        }}
+        onClick={openRanksSheet}
         className="bg-slate-900 text-white rounded-3xl p-5 shadow-md cursor-pointer hover:bg-slate-900/95 transition-all group active:scale-[0.99]"
       >
         <div className="flex items-center justify-between mb-3">
@@ -195,29 +213,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
           icon={<Star className="w-4 h-4 text-amber-500" />} 
           label="Wealth Tiers & Ranks" 
           meta={`Level ${currentRank.level}`}
-          onClick={() => {
-            triggerHaptic('light');
-            setIsRanksOpen(true);
-          }}
+          onClick={openRanksSheet}
         />
         <MenuRow 
           icon={<Trophy className="w-4 h-4 text-[#0088CC]" />} 
           label="Achievements" 
           meta={readyCount > 0 ? `${readyCount} Claimable` : 'Milestones'}
           highlightMeta={readyCount > 0}
-          onClick={() => {
-            triggerHaptic('light');
-            setIsAchievementsOpen(true);
-          }}
+          onClick={openAchievementsSheet}
         />
         <MenuRow 
           icon={<FileText className="w-4 h-4 text-indigo-500" />} 
           label="Protocol Whitepaper" 
           meta="v3.2 • Official"
-          onClick={() => {
-            triggerHaptic('light');
-            setIsWhitepaperOpen(true);
-          }}
+          onClick={openWhitepaperSheet}
         />
         {isAdmin && (
           <MenuRow 

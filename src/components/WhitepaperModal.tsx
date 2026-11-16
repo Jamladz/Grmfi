@@ -1312,8 +1312,6 @@ export const WhitepaperModal: React.FC<WhitepaperModalProps> = ({ isOpen, onClos
   const [simReferrals, setSimReferrals] = useState<number>(10);
   const [simBoosterId, setSimBoosterId] = useState<string>('turbo');
 
-  if (!isOpen) return null;
-
   const t = TRANSLATIONS[lang];
   const isRtl = lang === 'ar' || lang === 'fa';
 
@@ -1321,7 +1319,7 @@ export const WhitepaperModal: React.FC<WhitepaperModalProps> = ({ isOpen, onClos
   const simulatedBaseScore =
     (simBalance + selectedBooster.instantBonus) * 1.0 +
     1200 * 1.5 + // representative XP
-    simReferrals * 250 +
+    simReferrals * 2500 +
     8 * 120 + // representative completed quests
     5 * 300; // representative Rank 5
   const simulatedFinalScore = Math.round(simulatedBaseScore * selectedBooster.multiplier);
@@ -1335,24 +1333,28 @@ export const WhitepaperModal: React.FC<WhitepaperModalProps> = ({ isOpen, onClos
 
   return (
     <AnimatePresence>
-      <div
-        className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/80 backdrop-blur-md sm:items-center sm:p-4"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onClose();
-        }}
-      >
-        <motion.div
-          initial={{ y: '100%', opacity: 0 }}
-          animate={{ y: '0%', opacity: 1 }}
-          exit={{ y: '100%', opacity: 0 }}
-          transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-          dir={isRtl ? 'rtl' : 'ltr'}
-          className="w-full max-w-xl bg-[#F8FAFC] rounded-t-[32px] sm:rounded-[32px] text-slate-900 shadow-2xl relative overflow-hidden border-t sm:border border-slate-200/90 h-[90dvh] max-h-[90dvh] flex flex-col justify-between"
-        >
-          {/* Top Sticky Institutional Header */}
-          <div className="bg-white border-b border-slate-200/80 px-4 sm:px-5 pt-3 pb-2.5 shrink-0">
-            {/* Pull Handle */}
-            <div className="w-11 h-1.5 bg-slate-200 rounded-full mx-auto mb-2.5" />
+      {isOpen && (
+        <div className="fixed inset-0 z-[130] flex items-end justify-center sm:items-center sm:p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-slate-950/75 backdrop-blur-xs"
+          />
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}
+            dir={isRtl ? 'rtl' : 'ltr'}
+            className="w-full max-w-xl bg-[#F8FAFC] rounded-t-[32px] sm:rounded-[32px] text-slate-900 shadow-2xl relative overflow-hidden border-t sm:border border-slate-200/90 h-[90dvh] max-h-[90dvh] flex flex-col justify-between z-10 will-change-transform"
+          >
+            {/* Top Sticky Institutional Header */}
+            <div className="bg-white border-b border-slate-200/80 px-4 sm:px-5 pt-3 pb-2.5 shrink-0">
+              {/* Pull Handle */}
+              <div className="w-11 h-1.5 bg-slate-200 rounded-full mx-auto mb-2.5" />
 
             {/* Language Selector Bar */}
             <div className="flex items-center justify-between bg-slate-100/90 border border-slate-200/70 p-1 rounded-xl mb-3 gap-1">
@@ -2032,6 +2034,7 @@ export const WhitepaperModal: React.FC<WhitepaperModalProps> = ({ isOpen, onClos
           </div>
         </motion.div>
       </div>
+      )}
     </AnimatePresence>
   );
 };

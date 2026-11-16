@@ -19,8 +19,6 @@ export const WalletDrawer: React.FC<WalletDrawerProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
 
-  if (!isOpen) return null;
-
   const handleCopy = () => {
     if (wallet.address) {
       navigator.clipboard.writeText(wallet.address);
@@ -37,16 +35,29 @@ export const WalletDrawer: React.FC<WalletDrawerProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm">
-        <motion.div
-          initial={{ x: '100%' }}
-          animate={{ x: 0 }}
-          exit={{ x: '100%' }}
-          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="relative w-full max-w-sm h-full bg-white border-l border-slate-100 shadow-2xl text-slate-900 flex flex-col justify-between"
-        >
-          {/* Header */}
-          <div className="p-5 border-b border-slate-50 flex items-center justify-between">
+      {isOpen && (
+        <div className="fixed inset-0 z-[120] flex items-end justify-center">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs"
+          />
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}
+            className="relative w-full max-w-xl h-[82dvh] max-h-[82dvh] bg-white rounded-t-[32px] border-t border-slate-200/80 shadow-2xl text-slate-900 flex flex-col justify-between overflow-hidden z-10 will-change-transform"
+          >
+            {/* Pull Handle */}
+            <div className="pt-3 pb-1 flex items-center justify-center shrink-0 bg-white">
+              <div className="w-11 h-1.5 bg-slate-200 rounded-full" />
+            </div>
+            {/* Header */}
+            <div className="px-5 pb-4 pt-2 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-400 to-blue-600 p-0.5 shadow-md">
                 <div className="w-full h-full bg-white rounded-[14px] flex items-center justify-center">
@@ -165,6 +176,7 @@ export const WalletDrawer: React.FC<WalletDrawerProps> = ({
           </div>
         </motion.div>
       </div>
+      )}
     </AnimatePresence>
   );
 };

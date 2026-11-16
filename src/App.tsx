@@ -987,6 +987,56 @@ function App() {
     );
   }
 
+  const closeAllSheets = () => {
+    setIsWalletOpen(false);
+    setIsSettingsOpen(false);
+    setIsWhitepaperOpen(false);
+    setIsTokenSelectOpen(false);
+  };
+
+  const openWalletSheet = () => {
+    setIsSettingsOpen(false);
+    setIsWhitepaperOpen(false);
+    setIsTokenSelectOpen(false);
+    setIsWalletOpen(true);
+  };
+
+  const openSettingsSheet = () => {
+    setIsWalletOpen(false);
+    setIsWhitepaperOpen(false);
+    setIsTokenSelectOpen(false);
+    setIsSettingsOpen(true);
+  };
+
+  const openWhitepaperSheet = () => {
+    setIsWalletOpen(false);
+    setIsSettingsOpen(false);
+    setIsTokenSelectOpen(false);
+    setIsWhitepaperOpen(true);
+  };
+
+  const openTokenSelectSheet = (side: 'from' | 'to') => {
+    setIsWalletOpen(false);
+    setIsSettingsOpen(false);
+    setIsWhitepaperOpen(false);
+    setSelectingSide(side);
+    setIsTokenSelectOpen(true);
+  };
+
+  const switchView = (nextView: typeof activeView) => {
+    closeAllSheets();
+    setActiveView(nextView);
+  };
+
+  const isAnyOverlayOpen =
+    showWelcomeModal ||
+    Boolean(referralBonusModal?.show) ||
+    isWalletOpen ||
+    isSettingsOpen ||
+    isWhitepaperOpen ||
+    isTokenSelectOpen ||
+    txState !== 'idle';
+
   return (
     <div className="h-[100dvh] bg-[#F8FAFC] text-slate-900 font-sans selection:bg-blue-500/30 flex flex-col overflow-hidden relative pt-[var(--app-safe-top,env(safe-area-inset-top,8px))]">
       {/* Dynamic Background Accents */}
@@ -998,34 +1048,35 @@ function App() {
       <Header 
         onOpenWalletDrawer={() => {
           triggerHaptic('light');
-          setIsWalletOpen(true);
+          openWalletSheet();
         }} 
         onOpenSettings={() => {
           triggerHaptic('light');
-          setIsSettingsOpen(true);
+          openSettingsSheet();
         }}
         onOpenWhitepaper={() => {
           triggerHaptic('light');
-          setIsWhitepaperOpen(true);
+          openWhitepaperSheet();
         }}
         isAdmin={isAdmin}
         isAdminViewActive={activeView === 'admin'}
         onToggleAdmin={() => {
           triggerHaptic('light');
-          setActiveView(activeView === 'admin' ? 'swap' : 'admin');
+          switchView(activeView === 'admin' ? 'swap' : 'admin');
         }}
       />
 
       <main className={`flex-1 w-full mx-auto px-4 pt-2 pb-[calc(5.5rem+env(safe-area-inset-bottom,20px))] flex flex-col overflow-hidden relative z-10 ${
         activeView === 'admin' && isAdmin ? 'max-w-6xl' : 'max-w-xl'
       }`}>
-        <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait" initial={false}>
           {activeView === 'swap' && (
             <motion.div 
-              key="swap"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
+              key="view-swap"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
               className="flex-1 flex flex-col items-center justify-center overflow-y-auto no-scrollbar py-4"
             >
               <SwapCard 
@@ -1040,17 +1091,15 @@ function App() {
                 }}
                 onOpenFromTokenSelect={() => {
                   triggerHaptic('light');
-                  setSelectingSide('from');
-                  setIsTokenSelectOpen(true);
+                  openTokenSelectSheet('from');
                 }}
                 onOpenToTokenSelect={() => {
                   triggerHaptic('light');
-                  setSelectingSide('to');
-                  setIsTokenSelectOpen(true);
+                  openTokenSelectSheet('to');
                 }}
                 onOpenSettings={() => {
                   triggerHaptic('light');
-                  setIsSettingsOpen(true);
+                  openSettingsSheet();
                 }}
                 onSwap={() => {
                   triggerHaptic('medium');
@@ -1059,7 +1108,7 @@ function App() {
                 wallet={wallet}
                 onOpenConnectModal={() => {
                   triggerHaptic('light');
-                  setIsWalletOpen(true);
+                  openWalletSheet();
                 }}
                 slippage={slippage}
               />
@@ -1067,21 +1116,33 @@ function App() {
           )}
 
           {activeView === 'referrals' && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+            <motion.div
+              key="view-referrals"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="flex-1 overflow-y-auto no-scrollbar py-2"
+            >
               <ReferralsView 
-                key="referrals" 
                 userProfile={userProfile} 
                 onOpenChest={handleOpenChest}
                 onClaimUnclaimed={handleClaimUnclaimedReferrals}
               />
-            </div>
+            </motion.div>
           )}
           {activeView === 'tasks' && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+            <motion.div
+              key="view-tasks"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="flex-1 overflow-y-auto no-scrollbar py-2"
+            >
               <TasksView 
-                key="tasks" 
                 userProfile={userProfile} 
-                setActiveView={setActiveView}
+                setActiveView={switchView}
                 onSelectSwapPair={(toSymbol: string) => {
                   const grmfToken = TOKENS.find(t => t.symbol === 'GRMF') || TOKENS[0];
                   const targetToken = TOKENS.find(t => t.symbol.toUpperCase() === toSymbol.toUpperCase());
@@ -1092,42 +1153,68 @@ function App() {
                     const defaultSwapAmt = availGrmf >= 100 ? 100 : availGrmf > 0 ? Math.max(1, Math.floor(availGrmf * 0.25)) : 100;
                     setFromAmount(String(defaultSwapAmt));
                   }
-                  setActiveView('swap');
+                  switchView('swap');
                 }}
               />
-            </div>
+            </motion.div>
           )}
           {activeView === 'airdrop' && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+            <motion.div
+              key="view-airdrop"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="flex-1 overflow-y-auto no-scrollbar py-2"
+            >
               <AirdropView 
-                key="airdrop" 
                 userProfile={userProfile} 
                 wallet={wallet}
-                onOpenWalletModal={() => setIsWalletOpen(true)}
-                setActiveView={setActiveView}
+                onOpenWalletModal={openWalletSheet}
+                setActiveView={switchView}
               />
-            </div>
+            </motion.div>
           )}
           {activeView === 'profile' && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+            <motion.div
+              key="view-profile"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="flex-1 overflow-y-auto no-scrollbar py-2"
+            >
               <ProfileView 
-                key="profile" 
                 balances={balances} 
                 userProfile={userProfile} 
                 isAdmin={isAdmin}
-                onOpenAdmin={() => setActiveView('admin')}
+                onOpenAdmin={() => switchView('admin')}
               />
-            </div>
+            </motion.div>
           )}
           {activeView === 'admin' && isAdmin && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-              <AdminView key="admin" />
-            </div>
+            <motion.div
+              key="view-admin"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="flex-1 overflow-y-auto no-scrollbar py-2"
+            >
+              <AdminView />
+            </motion.div>
           )}
           {activeView === 'presale' && (
-            <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-              <PresaleHub key="presale" userProfile={userProfile} />
-            </div>
+            <motion.div
+              key="view-presale"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              className="flex-1 overflow-y-auto no-scrollbar py-2"
+            >
+              <PresaleHub userProfile={userProfile} />
+            </motion.div>
           )}
         </AnimatePresence>
       </main>
@@ -1138,31 +1225,31 @@ function App() {
           <div className="flex-1 bg-white/95 backdrop-blur-xl border border-slate-200/85 shadow-lg shadow-slate-900/8 rounded-full p-1.5 grid grid-cols-5 items-center gap-0.5">
             <NavButton 
               active={activeView === 'swap'} 
-              onClick={() => { triggerHaptic('light'); setActiveView('swap'); }} 
+              onClick={() => { triggerHaptic('light'); switchView('swap'); }} 
               icon={<ArrowLeftRight className="w-4 h-4" />} 
               label="Swap" 
             />
             <NavButton 
               active={activeView === 'tasks'} 
-              onClick={() => { triggerHaptic('light'); setActiveView('tasks'); }} 
+              onClick={() => { triggerHaptic('light'); switchView('tasks'); }} 
               icon={<ListTodo className="w-4 h-4" />} 
               label="Tasks" 
             />
             <NavButton 
               active={activeView === 'referrals'} 
-              onClick={() => { triggerHaptic('light'); setActiveView('referrals'); }} 
+              onClick={() => { triggerHaptic('light'); switchView('referrals'); }} 
               icon={<Users className="w-4 h-4" />} 
               label="Friends" 
             />
             <NavButton 
               active={activeView === 'airdrop'} 
-              onClick={() => { triggerHaptic('light'); setActiveView('airdrop'); }} 
+              onClick={() => { triggerHaptic('light'); switchView('airdrop'); }} 
               icon={<Trophy className="w-4 h-4" />} 
               label="Airdrop" 
             />
             <NavButton 
               active={activeView === 'presale'} 
-              onClick={() => { triggerHaptic('light'); setActiveView('presale'); }} 
+              onClick={() => { triggerHaptic('light'); switchView('presale'); }} 
               icon={<Rocket className="w-4 h-4" />} 
               label="Presale" 
             />
@@ -1170,7 +1257,7 @@ function App() {
 
           {/* Standalone Circular Profile Icon Button on the Same Row */}
           <button
-            onClick={() => { triggerHaptic('light'); setActiveView('profile'); }}
+            onClick={() => { triggerHaptic('light'); switchView('profile'); }}
             aria-label="Profile"
             title="Profile"
             className={`shrink-0 w-[54px] h-[54px] rounded-full flex items-center justify-center border transition-all active:scale-95 cursor-pointer shadow-lg ${
@@ -1186,13 +1273,15 @@ function App() {
 
       <AnimatePresence>
         {showWelcomeModal && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-xs sm:p-4">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              className="w-full max-w-[290px] bg-white rounded-3xl p-6 text-center shadow-2xl border border-slate-100"
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}
+              className="w-full max-w-md sm:max-w-[320px] bg-white rounded-t-[28px] sm:rounded-3xl p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,12px))] text-center shadow-2xl border-t sm:border border-slate-100"
             >
+              <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-4 sm:hidden" />
               <div className="flex flex-col items-center">
                 <div className="w-14 h-14 rounded-2xl bg-sky-50 mb-3.5 flex items-center justify-center">
                   <Gift className="w-7 h-7 text-[#0088CC]" />
@@ -1221,13 +1310,15 @@ function App() {
 
         {/* Referral Reward Modal Banner for Referred User */}
         {referralBonusModal?.show && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md">
+          <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center sm:p-4 bg-slate-900/70 backdrop-blur-xs">
             <motion.div
-              initial={{ opacity: 0, scale: 0.92, y: 16 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.92, y: 16 }}
-              className="w-full max-w-xs bg-white rounded-3xl p-6 text-center shadow-2xl border border-slate-100"
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}
+              className="w-full max-w-md sm:max-w-xs bg-white rounded-t-[28px] sm:rounded-3xl p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,12px))] text-center shadow-2xl border-t sm:border border-slate-100"
             >
+              <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-4 sm:hidden" />
               <div className="flex flex-col items-center">
                 <div className="w-16 h-16 rounded-2xl bg-amber-50 mb-4 flex items-center justify-center">
                   <Trophy className="w-8 h-8 text-amber-500" />
@@ -1247,7 +1338,7 @@ function App() {
                   </span>
                   <div className="flex items-baseline justify-center gap-1.5 font-mono tabular-nums">
                     <span className="text-3xl font-extrabold text-slate-900">
-                      +{referralBonusModal.reward}
+                      +{referralBonusModal.reward.toLocaleString()}
                     </span>
                     <span className="text-sm font-bold text-amber-600">GRMF</span>
                   </div>
@@ -1295,7 +1386,7 @@ function App() {
         toAmount={toAmount || '0'}
         toSymbol={toToken.symbol}
         onClose={() => setTxState('idle')}
-        onGoToTasks={() => setActiveView('tasks')}
+        onGoToTasks={() => switchView('tasks')}
       />
 
       <TokenSelectModal 
@@ -1311,7 +1402,7 @@ function App() {
         onClose={() => setIsWhitepaperOpen(false)}
       />
 
-      {!showWelcomeModal && !referralBonusModal?.show && (
+      {!isAnyOverlayOpen && (
         <AddToHomeScreenSheet />
       )}
     </div>
