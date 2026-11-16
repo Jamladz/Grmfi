@@ -18,13 +18,15 @@ import {
   Copy,
   Check,
   ShieldAlert,
-  Clock
+  Clock,
+  Bell
 } from 'lucide-react';
 import { useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
 import { toNano } from '@ton/core';
 import { auth } from '../lib/firebase';
 import { grantReward } from '../lib/rewardsEngine';
 import { useHomeScreenShortcut } from '../hooks/useHomeScreenShortcut';
+import { useTelegramWriteAccess } from '../hooks/useTelegramWriteAccess';
 import { serverTimestamp } from 'firebase/firestore';
 import { openTelegramLink, triggerHaptic, getTelegramUser } from '../lib/telegram';
 import { TokenSpinReel, SpinPrize } from './TokenSpinReel';
@@ -169,9 +171,18 @@ export const TasksView: React.FC<TasksViewProps> = ({
   const lastLoginTs = sanitizeTimestamp(loginEntry.claimedAt || loginEntry.completedAt, now);
   const activeStreak = lastLoginTs > 0 && (now - lastLoginTs) < (DAILY_COOLDOWN_MS * 2) ? Math.max(1, rawStreak) : 0;
 
+  const {
+    status: writeAccessStatus,
+    isAllowed: isWriteAccessAllowed,
+    isDeclined: isWriteAccessDeclined,
+    isRequesting: isWriteAccessRequesting,
+    requestPermission: requestWriteAccessPermission
+  } = useTelegramWriteAccess(userProfile);
+
   // One-time special tasks
   const shortcutTaskCompleted = taskProgress['shortcut_tg']?.status === 'completed';
   const tgChannelCompleted = taskProgress['tg_channel']?.status === 'completed';
+  const writeAccessTaskCompleted = taskProgress['write_access_tg']?.status === 'completed';
 
   const partnerTasks = [
     {
@@ -995,6 +1006,84 @@ export const TasksView: React.FC<TasksViewProps> = ({
                   className="min-h-[40px] bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold text-xs px-4 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 whitespace-nowrap"
                 >
                   <span>{claimingId === 'tg_channel' ? 'Verifying...' : 'Join'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* One-Time Special Task 3: Allow Telegram Bot Write Access (Telegram.WebApp.requestWriteAccess) */}
+        {(activeTab === 'all' || activeTab === 'special') && writeAccessStatus !== 'unsupported' && (
+          <div className="p-4 flex items-center justify-between gap-3.5 hover:bg-slate-50/60 transition-colors">
+            <div className="w-11 h-11 rounded-2xl bg-sky-50 text-[#0088CC] flex items-center justify-center shrink-0">
+              <Bell className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-bold text-slate-900 truncate">
+                Allow Telegram Bot Messages
+              </h4>
+              <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
+                <span className="font-mono tabular-nums font-bold text-emerald-600">+500 GRMF</span>
+                <span className="mx-1.5 text-slate-300">·</span>
+                <span>
+                  {writeAccessTaskCompleted
+                    ? 'Write access enabled'
+                    : isWriteAccessDeclined
+                      ? 'Declined — Tap Allow to enable'
+                      : 'Official Telegram permission'}
+                </span>
+              </p>
+            </div>
+            <div className="shrink-0">
+              {writeAccessTaskCompleted ? (
+                <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-bold px-2.5 py-1.5">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Done</span>
+                </span>
+              ) : isWriteAccessAllowed ? (
+                <button
+                  onClick={async () => {
+                    const ts = Date.now();
+                    await handleClaimTask(
+                      'write_access_tg',
+                      500,
+                      50,
+                      'task_write_access_tg',
+                      {
+                        'taskProgress.write_access_tg.status': 'completed',
+                        'taskProgress.write_access_tg.completedAt': ts
+                      },
+                      'Telegram Write Access verified! +500 GRMF credited.'
+                    );
+                  }}
+                  disabled={claimingId === 'write_access_tg'}
+                  className="min-h-[40px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                >
+                  <span>{claimingId === 'write_access_tg' ? 'Claiming...' : 'Claim'}</span>
+                </button>
+              ) : (
+                <button
+                  onClick={async () => {
+                    const granted = await requestWriteAccessPermission();
+                    if (granted) {
+                      const ts = Date.now();
+                      await handleClaimTask(
+                        'write_access_tg',
+                        500,
+                        50,
+                        'task_write_access_tg',
+                        {
+                          'taskProgress.write_access_tg.status': 'completed',
+                          'taskProgress.write_access_tg.completedAt': ts
+                        },
+                        'Telegram Write Access verified! +500 GRMF credited.'
+                      );
+                    }
+                  }}
+                  disabled={isWriteAccessRequesting || claimingId === 'write_access_tg'}
+                  className="min-h-[40px] bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                >
+                  <span>{isWriteAccessRequesting ? 'Popup...' : 'Allow'}</span>
                 </button>
               )}
             </div>

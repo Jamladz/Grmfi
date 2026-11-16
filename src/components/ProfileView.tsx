@@ -6,6 +6,7 @@ import { AchievementsModal } from './AchievementsModal';
 import { RanksModal } from './RanksModal';
 import { WhitepaperModal } from './WhitepaperModal';
 import { HomeScreenShortcutMenuItem } from './HomeScreenShortcutMenuItem';
+import { TelegramWriteAccessMenuItem } from './TelegramWriteAccessMenuItem';
 import { getUserTotalXp, getUserLevelInfo } from '../lib/levelSystem';
 import { triggerHaptic } from '../lib/telegram';
 
@@ -209,6 +210,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ balances, userProfile,
       {/* Grouped Navigation Menu */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden">
         <HomeScreenShortcutMenuItem />
+        <TelegramWriteAccessMenuItem userProfile={userProfile} />
         <MenuRow 
           icon={<Star className="w-4 h-4 text-amber-500" />} 
           label="Wealth Tiers & Ranks" 

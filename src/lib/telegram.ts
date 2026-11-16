@@ -270,3 +270,98 @@ export function showTelegramAlert(message: string, title = 'GRMF Fi') {
   }
   return false;
 }
+
+/**
+ * Retrieves the raw, cryptographically signed Telegram.WebApp.initData string
+ * for server-side HMAC-SHA256 validation.
+ */
+export function getRawTelegramInitData(): string {
+  if (typeof window === 'undefined') return '';
+  const webApp = (window as any).Telegram?.WebApp;
+
+  if (typeof webApp?.initData === 'string' && webApp.initData.trim().length > 0) {
+    return webApp.initData.trim();
+  }
+
+  try {
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const fromHash = hashParams.get('tgWebAppData');
+    if (fromHash && fromHash.trim().length > 0) {
+      return fromHash.trim();
+    }
+
+    const searchParams = new URLSearchParams(window.location.search);
+    const fromSearch = searchParams.get('tgWebAppData');
+    if (fromSearch && fromSearch.trim().length > 0) {
+      return fromSearch.trim();
+    }
+  } catch (e) {}
+
+  try {
+    const sessionParamsRaw = window.sessionStorage?.getItem('__telegram__initParams');
+    if (sessionParamsRaw) {
+      const sessionParams = JSON.parse(sessionParamsRaw);
+      if (typeof sessionParams?.tgWebAppData === 'string' && sessionParams.tgWebAppData.trim().length > 0) {
+        return sessionParams.tgWebAppData.trim();
+      }
+    }
+  } catch (e) {}
+
+  return '';
+}
+
+/**
+ * Invokes the official Telegram.WebApp.requestWriteAccess() method to display
+ * Telegram's native write-access permission popup.
+ * MUST only be called inside an explicit user click handler.
+ */
+export function requestTelegramWriteAccess(): Promise<'allowed' | 'declined' | 'unsupported'> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve('unsupported');
+      return;
+    }
+
+    const webApp = (window as any).Telegram?.WebApp;
+    if (!webApp || typeof webApp.requestWriteAccess !== 'function') {
+      resolve('unsupported');
+      return;
+    }
+
+    let settled = false;
+    const finish = (result: 'allowed' | 'declined') => {
+      if (settled) return;
+      settled = true;
+      try {
+        webApp.offEvent?.('writeAccessRequested', handleEvent);
+      } catch (e) {}
+      resolve(result);
+    };
+
+    const handleEvent = (eventData?: { status?: string } | string) => {
+      const rawStatus = typeof eventData === 'string' ? eventData : eventData?.status;
+      if (rawStatus === 'allowed') {
+        finish('allowed');
+      } else if (rawStatus) {
+        finish('declined');
+      }
+    };
+
+    try {
+      webApp.onEvent?.('writeAccessRequested', handleEvent);
+      webApp.requestWriteAccess((granted?: boolean) => {
+        if (granted === true) {
+          finish('allowed');
+        } else {
+          finish('declined');
+        }
+      });
+    } catch (e) {
+      try {
+        webApp.offEvent?.('writeAccessRequested', handleEvent);
+      } catch (err) {}
+      resolve('unsupported');
+    }
+  });
+}
+

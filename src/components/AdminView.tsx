@@ -13,7 +13,7 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { openTelegramLink, triggerHaptic } from '../lib/telegram';
+import { openTelegramLink, triggerHaptic, getRawTelegramInitData } from '../lib/telegram';
 import {
   Users,
   Search,
@@ -29,7 +29,8 @@ import {
   Clock,
   Copy,
   Check,
-  Edit3
+  Edit3,
+  Send
 } from 'lucide-react';
 
 interface NormalizedAdminUser {
@@ -246,6 +247,7 @@ export const AdminView: React.FC = () => {
   const [visibleCount, setVisibleCount] = useState(150);
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sendingPmUserId, setSendingPmUserId] = useState<string | null>(null);
 
   const [botMau, setBotMau] = useState<number>(4329);
   const [isEditingMau, setIsEditingMau] = useState(false);
@@ -762,6 +764,51 @@ export const AdminView: React.FC = () => {
                             <span className="text-[10px] font-bold text-amber-600" title="Telegram Premium">
                               ★
                             </span>
+                          )}
+                          {(user.raw?.writeAccessGranted || user.raw?.allowsWriteToPm) && user.telegramId && (
+                            <button
+                              type="button"
+                              disabled={sendingPmUserId === user.telegramId}
+                              onClick={async () => {
+                                triggerHaptic('light');
+                                const rawInitData = getRawTelegramInitData();
+                                if (!rawInitData) {
+                                  setAdminNotice('Open Admin Console inside Telegram Mini App to send Bot API messages.');
+                                  setTimeout(() => setAdminNotice(null), 4000);
+                                  return;
+                                }
+                                setSendingPmUserId(user.telegramId);
+                                try {
+                                  const resp = await fetch('/api/telegram/send-message', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      initData: rawInitData,
+                                      targetTelegramId: user.telegramId,
+                                      text: `🚀 <b>GRMF Fi Official Update</b>\n\nHello ${user.displayName}! Don't miss the limited-time +60,000 GRMF 5-Friends Referral Flash Offer inside the Mini App!`
+                                    })
+                                  });
+                                  const data = await resp.json();
+                                  if (resp.ok && data?.ok) {
+                                    triggerHaptic('success');
+                                    setAdminNotice(`Bot message sent to ${user.displayName} (#${user.telegramId})`);
+                                  } else {
+                                    triggerHaptic('error');
+                                    setAdminNotice(data?.error || 'Failed to send bot message');
+                                  }
+                                } catch (e) {
+                                  setAdminNotice('Network error while sending bot message');
+                                } finally {
+                                  setSendingPmUserId(null);
+                                  setTimeout(() => setAdminNotice(null), 4000);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold hover:bg-emerald-100 transition-colors cursor-pointer"
+                              title="User granted write access — Click to send official Bot API message"
+                            >
+                              <Send className="w-2.5 h-2.5" />
+                              <span>{sendingPmUserId === user.telegramId ? 'Sending...' : 'PM Allowed'}</span>
+                            </button>
                           )}
                         </div>
 
