@@ -11,7 +11,41 @@ interface SpecialOfferSheetProps {
 }
 
 const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const FLASH_OFFER_END_KEY = 'grmf_flash_offer_10d_end_ts';
+const SPECIAL_OFFER_LAST_SHOWN_KEY = 'grmf_special_offer_last_shown_ts';
+
+export function shouldOpenSpecialOffer24h(userId?: string, userProfile?: any): boolean {
+  try {
+    if (userProfile?.taskProgress?.flash_invite_5_60k?.status === 'claimed') {
+      return false;
+    }
+    const now = Date.now();
+    const globalSaved = parseInt(localStorage.getItem(SPECIAL_OFFER_LAST_SHOWN_KEY) || '0', 10) || 0;
+    const userSaved = userId
+      ? parseInt(localStorage.getItem(`${SPECIAL_OFFER_LAST_SHOWN_KEY}_${userId}`) || '0', 10) || 0
+      : 0;
+    const profileSaved = Number(userProfile?.lastSpecialOfferShownAt) || 0;
+
+    const lastShown = Math.max(globalSaved, userSaved, profileSaved);
+    if (lastShown > 0 && now - lastShown < TWENTY_FOUR_HOURS_MS) {
+      return false;
+    }
+    return true;
+  } catch (e) {
+    return true;
+  }
+}
+
+export function markSpecialOfferShown24h(userId?: string): void {
+  try {
+    const nowStr = String(Date.now());
+    localStorage.setItem(SPECIAL_OFFER_LAST_SHOWN_KEY, nowStr);
+    if (userId) {
+      localStorage.setItem(`${SPECIAL_OFFER_LAST_SHOWN_KEY}_${userId}`, nowStr);
+    }
+  } catch (e) {}
+}
 
 export function getTenDayOfferCountdown(now = Date.now()): string {
   let endTs = 0;
@@ -51,12 +85,13 @@ export const SpecialOfferSheet: React.FC<SpecialOfferSheetProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    markSpecialOfferShown24h(userProfile?.id);
     setCountdownText(getTenDayOfferCountdown());
     const timer = setInterval(() => {
       setCountdownText(getTenDayOfferCountdown());
     }, 1000);
     return () => clearInterval(timer);
-  }, [isOpen]);
+  }, [isOpen, userProfile?.id]);
 
   const existingReferrals = Math.max(
     Number(userProfile?.referralsCount) || 0,

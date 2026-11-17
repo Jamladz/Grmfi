@@ -186,6 +186,14 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
   const partnerTasks = [
     {
+      id: 'partner_apexpool',
+      label: 'Launch ApexPool Mini App',
+      subtitle: 'Partner Pool App',
+      url: 'https://t.me/ApexPoolbot/apex?startapp=1368899842',
+      reward: 500,
+      xp: 50
+    },
+    {
       id: 'partner_mining_usdt',
       label: 'Launch USDT Mining 2027 Bot',
       subtitle: 'Partner Mini App',

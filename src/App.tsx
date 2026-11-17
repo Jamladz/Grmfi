@@ -54,7 +54,7 @@ import { PresaleHub } from './components/PresaleHub';
 import { SettingsModal } from './components/SettingsModal';
 import { WhitepaperModal } from './components/WhitepaperModal';
 import { AddToHomeScreenSheet } from './components/AddToHomeScreenSheet';
-import { SpecialOfferSheet } from './components/SpecialOfferSheet';
+import { SpecialOfferSheet, shouldOpenSpecialOffer24h, markSpecialOfferShown24h } from './components/SpecialOfferSheet';
 import { triggerHaptic, initTelegramFullScreen, getTelegramUser, isStrictAdminUser } from './lib/telegram';
 import { Users, ShieldAlert, Gift, Rocket } from 'lucide-react';
 
@@ -193,7 +193,6 @@ function App() {
   const [selectingSide, setSelectingSide] = useState<'from' | 'to' | null>(null);
   const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [isWhitepaperOpen, setIsWhitepaperOpen] = useState(false);
-  const [isSpecialOfferOpen, setIsSpecialOfferOpen] = useState(true);
   const [openFlashMissionOnLoad, setOpenFlashMissionOnLoad] = useState(false);
   const [txState, setTxState] = useState<TransactionState>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -253,6 +252,11 @@ function App() {
       telegramId: tgUser?.id ? Number(tgUser.id) : null,
     } : { id: initialDocId };
   });
+
+  // Show the 5-Friends Special Offer sheet at most once every 24 hours per user
+  const [isSpecialOfferOpen, setIsSpecialOfferOpen] = useState<boolean>(() =>
+    shouldOpenSpecialOffer24h(initialDocId, userProfile)
+  );
 
   const [balances, setBalances] = useState<Record<string, number>>(() => {
     try {
@@ -1425,8 +1429,12 @@ function App() {
 
       <SpecialOfferSheet
         isOpen={shouldShowSpecialOffer}
-        onClose={() => setIsSpecialOfferOpen(false)}
+        onClose={() => {
+          markSpecialOfferShown24h(userProfile?.id);
+          setIsSpecialOfferOpen(false);
+        }}
         onGoToMission={() => {
+          markSpecialOfferShown24h(userProfile?.id);
           setIsSpecialOfferOpen(false);
           setOpenFlashMissionOnLoad(true);
           switchView('tasks');
