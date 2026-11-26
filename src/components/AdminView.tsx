@@ -10,7 +10,8 @@ import {
   getDoc,
   setDoc,
   serverTimestamp,
-  onSnapshot
+  onSnapshot,
+  increment
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { openTelegramLink, triggerHaptic, getRawTelegramInitData } from '../lib/telegram';
@@ -242,11 +243,14 @@ export const AdminView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'users' | 'withdrawals'>('users');
+  const [withdrawalFilter, setWithdrawalFilter] = useState<'all' | 'pending' | 'completed' | 'rejected'>('all');
   const [userFilter, setUserFilter] = useState<'all' | 'telegram'>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'referrals' | 'grmf' | 'newest'>('recent');
   const [visibleCount, setVisibleCount] = useState(150);
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedWalletReqId, setCopiedWalletReqId] = useState<string | null>(null);
+  const [processingWithdrawId, setProcessingWithdrawId] = useState<string | null>(null);
   const [sendingPmUserId, setSendingPmUserId] = useState<string | null>(null);
 
   const [botMau, setBotMau] = useState<number>(4329);
@@ -374,11 +378,6 @@ export const AdminView: React.FC = () => {
           processUsersSnapshot(latestDocsRef.current);
         }
       } catch (e) {}
-
-      // 3. Fetch withdrawal requests
-      const qWithdraw = query(collection(db, 'withdrawal_requests'), orderBy('createdAt', 'desc'), limit(100));
-      const snapWithdraw = await getDocs(qWithdraw);
-      setWithdrawals(snapWithdraw.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
       console.error('Admin fetchAuxData error:', e);
     } finally {
@@ -386,12 +385,12 @@ export const AdminView: React.FC = () => {
     }
   };
 
-  // Single real-time listener on users collection (avoids duplicate getDocs reads)
+  // Real-time listeners on users and withdrawal_requests collections
   useEffect(() => {
     fetchAuxData();
 
     const qLive = query(collection(db, 'users'), limit(5000));
-    const unsub = onSnapshot(
+    const unsubUsers = onSnapshot(
       qLive,
       (snap) => {
         processUsersSnapshot(snap.docs);
@@ -403,7 +402,33 @@ export const AdminView: React.FC = () => {
       }
     );
 
-    return () => unsub();
+    const qWithdraw = query(collection(db, 'withdrawal_requests'), limit(300));
+    const unsubWithdrawals = onSnapshot(
+      qWithdraw,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a: any, b: any) => {
+          const tsA =
+            a.createdTimestamp ||
+            a.createdAt?.toMillis?.() ||
+            (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+          const tsB =
+            b.createdTimestamp ||
+            b.createdAt?.toMillis?.() ||
+            (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+          return tsB - tsA;
+        });
+        setWithdrawals(list);
+      },
+      (err) => {
+        console.warn('Admin withdrawals listener warning:', err);
+      }
+    );
+
+    return () => {
+      unsubUsers();
+      unsubWithdrawals();
+    };
   }, []);
 
   const handleSaveBotMau = async () => {
@@ -421,16 +446,60 @@ export const AdminView: React.FC = () => {
     } catch (e) {}
   };
 
-  const handleWithdrawalStatus = async (id: string, status: 'approved' | 'rejected') => {
+  const handleWithdrawalStatus = async (reqItem: any, status: 'completed' | 'rejected') => {
+    if (!reqItem?.id) return;
     triggerHaptic('medium');
+    setProcessingWithdrawId(reqItem.id);
     try {
-      await updateDoc(doc(db, 'withdrawal_requests', id), { status });
-      setWithdrawals((prev) => prev.map((w) => (w.id === id ? { ...w, status } : w)));
+      const nowTs = Date.now();
+      await updateDoc(doc(db, 'withdrawal_requests', reqItem.id), {
+        status,
+        updatedAt: serverTimestamp(),
+        updatedTimestamp: nowTs,
+        ...(status === 'completed' ? { completedAt: serverTimestamp(), completedTimestamp: nowTs } : {})
+      });
+
+      // If rejected, refund the presale balance back to the user's Presale Vault
+      if (status === 'rejected' && reqItem.userId && Number(reqItem.amount) > 0) {
+        await setDoc(
+          doc(db, 'users', reqItem.userId),
+          {
+            presaleBalances: {
+              GRMF: increment(Number(reqItem.amount))
+            }
+          },
+          { merge: true }
+        ).catch(() => {});
+      }
+
+      setWithdrawals((prev) =>
+        prev.map((w) => (w.id === reqItem.id ? { ...w, status, updatedTimestamp: nowTs } : w))
+      );
+      triggerHaptic('success');
+      setAdminNotice(
+        status === 'completed'
+          ? `Withdrawal #${String(reqItem.id).slice(0, 6).toUpperCase()} confirmed as sent (${Number(reqItem.amount || 0).toLocaleString()} GRMF).`
+          : `Withdrawal #${String(reqItem.id).slice(0, 6).toUpperCase()} declined and refunded to user vault.`
+      );
+      setTimeout(() => setAdminNotice(null), 4000);
     } catch (e) {
       console.error(e);
+      triggerHaptic('error');
       setAdminNotice('Failed to update withdrawal status.');
       setTimeout(() => setAdminNotice(null), 3500);
+    } finally {
+      setProcessingWithdrawId(null);
     }
+  };
+
+  const handleCopyWalletAddress = (reqId: string, address: string) => {
+    if (!address) return;
+    triggerHaptic('light');
+    try {
+      navigator.clipboard.writeText(address.trim());
+      setCopiedWalletReqId(reqId);
+      setTimeout(() => setCopiedWalletReqId(null), 2200);
+    } catch (e) {}
   };
 
   const handleCopyId = (idText: string) => {
@@ -890,67 +959,216 @@ export const AdminView: React.FC = () => {
           )}
         </div>
       ) : (
-        /* Withdrawal Requests Tab */
-        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs overflow-hidden divide-y divide-slate-100">
-          {withdrawals.length === 0 ? (
-            <div className="p-14 text-center flex flex-col items-center gap-2">
-              <DollarSign className="w-7 h-7 text-slate-300" />
-              <p className="text-sm font-bold text-slate-700">No Pending Withdrawal Requests</p>
-            </div>
-          ) : (
-            withdrawals.map((w) => (
-              <div key={w.id} className="p-5 flex flex-col gap-3.5 hover:bg-slate-50/50 transition-colors">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
-                      <span className="text-lg font-extrabold text-slate-900">{w.amount}</span>
-                      <span className="text-xs font-bold text-[#0088CC] uppercase">{w.currency}</span>
-                    </div>
-                    <span className="text-xs text-slate-500 font-mono tabular-nums mt-0.5 block">
-                      User ID: {w.userId}
-                    </span>
-                  </div>
-                  <span
-                    className={`text-xs font-bold capitalize px-3 py-1 rounded-xl ${
-                      w.status === 'pending'
-                        ? 'bg-amber-50 text-amber-700'
-                        : w.status === 'approved'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-rose-50 text-rose-700'
-                    }`}
-                  >
-                    {w.status}
-                  </span>
-                </div>
-
-                <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/60">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
-                    TON Recipient Address
-                  </span>
-                  <span className="text-xs font-mono font-semibold text-slate-700 break-all">
-                    {w.recipientAddress}
-                  </span>
-                </div>
-
-                {w.status === 'pending' && (
-                  <div className="flex gap-2.5">
-                    <button
-                      onClick={() => handleWithdrawalStatus(w.id, 'approved')}
-                      className="flex-1 min-h-[42px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
-                    >
-                      <CheckCircle className="w-4 h-4" /> Approve
-                    </button>
-                    <button
-                      onClick={() => handleWithdrawalStatus(w.id, 'rejected')}
-                      className="flex-1 min-h-[42px] bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
-                    >
-                      <XCircle className="w-4 h-4" /> Reject
-                    </button>
-                  </div>
-                )}
+        /* Withdrawal Requests Management Tab */
+        <div className="flex flex-col gap-3.5">
+          {/* Withdrawal Summary & Filter Controls Bar */}
+          <div className="bg-white rounded-3xl p-4 border border-slate-200/80 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-4 text-xs">
+              <div>
+                <span className="text-slate-400 font-semibold block">Pending Action</span>
+                <span className="text-sm font-extrabold font-mono tabular-nums text-amber-600">
+                  {withdrawals.filter((w) => !w.status || w.status === 'pending').length} Requests
+                </span>
               </div>
-            ))
-          )}
+              <div className="h-7 w-px bg-slate-200" />
+              <div>
+                <span className="text-slate-400 font-semibold block">Confirmed Sent</span>
+                <span className="text-sm font-extrabold font-mono tabular-nums text-emerald-600">
+                  {withdrawals.filter((w) => w.status === 'approved' || w.status === 'completed').length} Settled
+                </span>
+              </div>
+            </div>
+
+            <div className="flex bg-slate-100 p-1 rounded-xl gap-1">
+              {[
+                { id: 'all', label: `All (${withdrawals.length})` },
+                {
+                  id: 'pending',
+                  label: `Pending (${withdrawals.filter((w) => !w.status || w.status === 'pending').length})`
+                },
+                {
+                  id: 'completed',
+                  label: `Confirmed (${withdrawals.filter((w) => w.status === 'approved' || w.status === 'completed').length})`
+                },
+                {
+                  id: 'rejected',
+                  label: `Declined (${withdrawals.filter((w) => w.status === 'rejected').length})`
+                }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('light');
+                    setWithdrawalFilter(tab.id as any);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    withdrawalFilter === tab.id
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-2xs overflow-hidden divide-y divide-slate-100">
+            {(() => {
+              const filteredWithdrawals = withdrawals.filter((w) => {
+                const st = String(w.status || 'pending').toLowerCase();
+                if (withdrawalFilter === 'pending') return st === 'pending' || st === 'processing';
+                if (withdrawalFilter === 'completed') return st === 'approved' || st === 'completed';
+                if (withdrawalFilter === 'rejected') return st === 'rejected';
+                return true;
+              });
+
+              if (filteredWithdrawals.length === 0) {
+                return (
+                  <div className="p-14 text-center flex flex-col items-center gap-2">
+                    <DollarSign className="w-7 h-7 text-slate-300" />
+                    <p className="text-sm font-bold text-slate-700">No Matching Withdrawal Requests</p>
+                    <p className="text-xs text-slate-400">
+                      Presale withdrawal requests from users will appear here in real time.
+                    </p>
+                  </div>
+                );
+              }
+
+              return filteredWithdrawals.map((w) => {
+                const st = String(w.status || 'pending').toLowerCase();
+                const isCompleted = st === 'approved' || st === 'completed';
+                const isRejected = st === 'rejected';
+                const isPending = !isCompleted && !isRejected;
+                const matchedUser = allUsers.find((u) => u.id === w.userId);
+                const userLabel =
+                  matchedUser?.displayName ||
+                  (w.username ? `@${String(w.username).replace(/^@/, '')}` : null) ||
+                  w.userId;
+                const tgIdLabel = matchedUser?.telegramId || w.telegramId || null;
+                const amountNum = Number(w.amount) || 0;
+                const tonEquivalent = (amountNum / 500).toFixed(2);
+                const isCopied = copiedWalletReqId === w.id;
+                const isProcessingThis = processingWithdrawId === w.id;
+
+                return (
+                  <div
+                    key={w.id}
+                    className="p-5 flex flex-col gap-3.5 hover:bg-slate-50/50 transition-colors"
+                  >
+                    {/* Header: Amount, User Identity & Status */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-baseline gap-2 font-mono tabular-nums">
+                          <span className="text-lg font-extrabold text-slate-900">
+                            {amountNum.toLocaleString()} {w.currency || 'GRMF'}
+                          </span>
+                          <span className="text-xs font-bold text-[#0088CC]">
+                            · ≈ {tonEquivalent} TON
+                          </span>
+                        </div>
+                        <div className="flex items-center flex-wrap gap-1.5 text-xs text-slate-500 mt-1">
+                          <span className="font-bold text-slate-800">{userLabel}</span>
+                          {tgIdLabel && (
+                            <>
+                              <span className="text-slate-300">·</span>
+                              <span className="font-mono tabular-nums">TG ID: {tgIdLabel}</span>
+                            </>
+                          )}
+                          <span className="text-slate-300">·</span>
+                          <span className="font-mono tabular-nums text-slate-400">
+                            Ref #{String(w.id).slice(0, 6).toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        {isCompleted ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
+                            <CheckCircle className="w-4 h-4 shrink-0" />
+                            <span>Confirmed Sent</span>
+                          </span>
+                        ) : isRejected ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-600">
+                            <XCircle className="w-4 h-4 shrink-0" />
+                            <span>Declined & Refunded</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-600">
+                            <Clock className="w-4 h-4 shrink-0" />
+                            <span>Pending Transfer</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* TON Recipient Wallet Address Box with One-Click Copy Button */}
+                    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[11px] font-bold text-slate-400 block mb-1">
+                          Recipient TON Wallet Address (Send {amountNum.toLocaleString()} GRMF)
+                        </span>
+                        <span className="text-xs font-mono font-bold text-slate-900 break-all block">
+                          {w.recipientAddress || '—'}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCopyWalletAddress(w.id, w.recipientAddress)}
+                        className={`min-h-[42px] px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shrink-0 whitespace-nowrap ${
+                          isCopied
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-900 hover:bg-slate-800 text-white'
+                        }`}
+                      >
+                        {isCopied ? (
+                          <>
+                            <Check className="w-4 h-4" />
+                            <span>Address Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            <span>Copy Wallet Address</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Admin Action Buttons: Confirm Sent or Reject & Refund */}
+                    {isPending && (
+                      <div className="flex flex-col sm:flex-row gap-2.5">
+                        <button
+                          type="button"
+                          disabled={isProcessingThis}
+                          onClick={() => handleWithdrawalStatus(w, 'completed')}
+                          className="flex-1 min-h-[44px] bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          <span>
+                            {isProcessingThis
+                              ? 'Confirming...'
+                              : `Confirm Withdrawal Sent (${amountNum.toLocaleString()} GRMF)`}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isProcessingThis}
+                          onClick={() => handleWithdrawalStatus(w, 'rejected')}
+                          className="sm:w-44 min-h-[44px] bg-slate-100 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>Decline & Refund</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+          </div>
         </div>
       )}
     </div>
