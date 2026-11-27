@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
+import { toNano } from '@ton/core';
 import { 
   ArrowLeftRight, 
   Wallet as WalletIcon, 
@@ -76,6 +77,8 @@ function safeCloneDeep(obj: any): any {
 }
 
 const DAILY_TASK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const SWAP_TREASURY_ADDRESS = 'UQAJcp9v_CqgdqHmAjs8sZRs0UPkQgZBuWct2AfMBJfgP6QS';
+const SWAP_TON_FEE = '0.05';
 
 function sanitizeTaskTimestamp(val: any, now = Date.now()): number {
   if (typeof val !== 'number' || isNaN(val) || val <= 0) return 0;
@@ -775,107 +778,138 @@ function App() {
     const availFrom = mergedBalances[fromToken.symbol] || 0;
     if (fAmt > availFrom) return;
 
-    const targetId =
-      userProfile?.id ||
-      localStorage.getItem('grmf_persistent_doc_id') ||
-      auth.currentUser?.uid;
-
-    const fromSym = fromToken.symbol;
-    const toSym = toToken.symbol;
-    const partnerSym = fromSym === 'GRMF' ? toSym : toSym === 'GRMF' ? fromSym : toSym;
-    const taskId = partnerSym && partnerSym !== 'GRMF' ? `swap_grmf_${partnerSym.toLowerCase()}` : null;
-    const nowTs = Date.now();
-
-    const canCompleteSwapTask = (progressMap: any, id: string | null) => {
-      if (!id) return false;
-      const entry = progressMap?.[id];
-      if (!entry) return true;
-      const status = typeof entry === 'object' ? entry.status : entry;
-      // One-time swap task: only mark completed if not already completed or claimed
-      return status !== 'completed' && status !== 'claimed';
-    };
-
-    const curBeta = { ...mergedBalances };
-    const curReal = { ...(userProfile?.realBalances || {}), GRMF: mergedBalances.GRMF };
-
-    const newBetaFrom = Math.max(0, (curBeta[fromSym] || 0) - fAmt);
-    const newBetaTo = Number(((curBeta[toSym] || 0) + tAmt).toFixed(6));
-
-    const newRealFrom = Math.max(0, (curReal[fromSym] || 0) - fAmt);
-    const newRealTo = Number(((curReal[toSym] || 0) + tAmt).toFixed(6));
-
-    const updatedBeta = { ...curBeta, [fromSym]: newBetaFrom, [toSym]: newBetaTo };
-    const updatedReal = { ...curReal, [fromSym]: newRealFrom, [toSym]: newRealTo };
-
-    // Immediately update local state & mark swap task completed right away
-    setBalances(updatedBeta);
-    if (toSym === 'GRMF') setRealGrmf(newRealTo);
-    else if (fromSym === 'GRMF') setRealGrmf(newRealFrom);
-
-    const prevProgress = userProfile?.taskProgress || {};
-    const shouldMarkTaskCompleted = taskId ? canCompleteSwapTask(prevProgress, taskId) : false;
-    const updatedProgress = { ...prevProgress };
-    if (taskId && shouldMarkTaskCompleted) {
-      updatedProgress[taskId] = {
-        ...(updatedProgress[taskId] || {}),
-        status: 'completed',
-        completedAt: nowTs
-      };
-    }
-
-    setUserProfile((prev: any) => {
-      const nextProfile = {
-        ...(prev || {}),
-        betaBalances: updatedBeta,
-        realBalances: updatedReal,
-        taskProgress: updatedProgress
-      };
-      try {
-        localStorage.setItem('grmf_cached_profile', JSON.stringify(nextProfile));
-        localStorage.setItem('grmf_cached_balances', JSON.stringify(updatedBeta));
-        localStorage.setItem('grmf_cached_real_grmf', String(updatedReal.GRMF || 0));
-      } catch (e) {}
-      return nextProfile;
-    });
-
-    // Persist swap & task completion to Firestore immediately so it is never lost
-    if (targetId) {
-      const firestoreUpdate: Record<string, any> = {
-        betaBalances: updatedBeta,
-        realBalances: updatedReal,
-        lastActiveAt: serverTimestamp(),
-        lastActiveTimestamp: nowTs
-      };
-
-      if (taskId && shouldMarkTaskCompleted) {
-        firestoreUpdate[`taskProgress.${taskId}.status`] = 'completed';
-        firestoreUpdate[`taskProgress.${taskId}.completedAt`] = nowTs;
-      }
-
-      grantReward({
-        userId: targetId,
-        telegramId: userProfile?.telegramId,
-        username: userProfile?.username || userProfile?.telegramUsername,
-        firstName: userProfile?.firstName,
-        source: `swap_${fromSym}_to_${toSym}`,
-        amount: 0,
-        xp: 30,
-        balanceType: 'real',
-        extraUserUpdates: firestoreUpdate
-      }).catch((err) => console.warn('Swap reward sync warning:', err));
+    // Require TON wallet connection for the 0.05 TON on-chain swap fee
+    if (!tonConnectUI.connected) {
+      tonConnectUI.openModal();
+      return;
     }
 
     setTxState('submitting');
     setTxHash(null);
 
-    setTimeout(() => {
+    try {
+      const transaction = {
+        validUntil: Math.floor(Date.now() / 1000) + 600,
+        messages: [
+          {
+            address: SWAP_TREASURY_ADDRESS,
+            amount: toNano(SWAP_TON_FEE).toString()
+          }
+        ]
+      };
+
+      const txResult = await tonConnectUI.sendTransaction(transaction);
+
+      const targetId =
+        userProfile?.id ||
+        localStorage.getItem('grmf_persistent_doc_id') ||
+        auth.currentUser?.uid;
+
+      const fromSym = fromToken.symbol;
+      const toSym = toToken.symbol;
+      const partnerSym = fromSym === 'GRMF' ? toSym : toSym === 'GRMF' ? fromSym : toSym;
+      const taskId = partnerSym && partnerSym !== 'GRMF' ? `swap_grmf_${partnerSym.toLowerCase()}` : null;
+      const nowTs = Date.now();
+
+      // 24-Hour Recurring Swap Mission evaluation:
+      // Allows completing again once 24 hours have passed since the last claim
+      const canCompleteSwapTask = (progressMap: any, id: string | null) => {
+        if (!id) return false;
+        const entry = progressMap?.[id];
+        if (!entry) return true;
+        const status = typeof entry === 'object' ? entry.status : entry;
+        if (status === 'completed') return false; // Already ready to claim
+        if (status === 'claimed') {
+          const lastClaimTs = sanitizeTaskTimestamp(entry?.claimedAt || entry?.completedAt, nowTs);
+          return !lastClaimTs || (nowTs - lastClaimTs >= DAILY_TASK_COOLDOWN_MS);
+        }
+        return true;
+      };
+
+      const curBeta = { ...mergedBalances };
+      const curReal = { ...(userProfile?.realBalances || {}), GRMF: mergedBalances.GRMF };
+
+      const newBetaFrom = Math.max(0, (curBeta[fromSym] || 0) - fAmt);
+      const newBetaTo = Number(((curBeta[toSym] || 0) + tAmt).toFixed(6));
+
+      const newRealFrom = Math.max(0, (curReal[fromSym] || 0) - fAmt);
+      const newRealTo = Number(((curReal[toSym] || 0) + tAmt).toFixed(6));
+
+      const updatedBeta = { ...curBeta, [fromSym]: newBetaFrom, [toSym]: newBetaTo };
+      const updatedReal = { ...curReal, [fromSym]: newRealFrom, [toSym]: newRealTo };
+
+      // Update local state & mark 24h swap task completed
+      setBalances(updatedBeta);
+      if (toSym === 'GRMF') setRealGrmf(newRealTo);
+      else if (fromSym === 'GRMF') setRealGrmf(newRealFrom);
+
+      const prevProgress = userProfile?.taskProgress || {};
+      const shouldMarkTaskCompleted = taskId ? canCompleteSwapTask(prevProgress, taskId) : false;
+      const updatedProgress = { ...prevProgress };
+      if (taskId && shouldMarkTaskCompleted) {
+        updatedProgress[taskId] = {
+          ...(updatedProgress[taskId] || {}),
+          status: 'completed',
+          completedAt: nowTs
+        };
+      }
+
+      setUserProfile((prev: any) => {
+        const nextProfile = {
+          ...(prev || {}),
+          betaBalances: updatedBeta,
+          realBalances: updatedReal,
+          taskProgress: updatedProgress
+        };
+        try {
+          localStorage.setItem('grmf_cached_profile', JSON.stringify(nextProfile));
+          localStorage.setItem('grmf_cached_balances', JSON.stringify(updatedBeta));
+          localStorage.setItem('grmf_cached_real_grmf', String(updatedReal.GRMF || 0));
+        } catch (e) {}
+        return nextProfile;
+      });
+
+      // Persist swap & 24h task completion to Firestore
+      if (targetId) {
+        const firestoreUpdate: Record<string, any> = {
+          betaBalances: updatedBeta,
+          realBalances: updatedReal,
+          lastActiveAt: serverTimestamp(),
+          lastActiveTimestamp: nowTs
+        };
+
+        if (taskId && shouldMarkTaskCompleted) {
+          firestoreUpdate[`taskProgress.${taskId}.status`] = 'completed';
+          firestoreUpdate[`taskProgress.${taskId}.completedAt`] = nowTs;
+        }
+
+        grantReward({
+          userId: targetId,
+          telegramId: userProfile?.telegramId,
+          username: userProfile?.username || userProfile?.telegramUsername,
+          firstName: userProfile?.firstName,
+          source: `swap_ton_${fromSym}_to_${toSym}`,
+          amount: 0,
+          xp: 30,
+          balanceType: 'real',
+          extraUserUpdates: firestoreUpdate
+        }).catch((err) => console.warn('Swap reward sync warning:', err));
+      }
+
       setTxState('confirming');
       setTimeout(() => {
         triggerHaptic('success');
         setTxState('success');
-        setTxHash('0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6));
-      }, 900);
-    }, 600);
+        const bocPreview = txResult?.boc
+          ? '0x' + txResult.boc.slice(0, 8) + '...' + txResult.boc.slice(-4)
+          : '0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6);
+        setTxHash(bocPreview);
+      }, 700);
+    } catch (err) {
+      console.warn('0.05 TON swap transaction cancelled or failed:', err);
+      triggerHaptic('error');
+      setTxState('idle');
+    }
   };
 
   const handleSelectToken = (token: Token) => {

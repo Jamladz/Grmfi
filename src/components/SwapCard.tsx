@@ -74,7 +74,7 @@ export const SwapCard: React.FC<SwapCardProps> = ({
               Token Swap
             </h1>
             <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-              Instant execution · Zero protocol fee
+              On-chain execution · <span className="font-mono tabular-nums font-bold text-slate-700">0.05 TON</span> swap fee
             </p>
           </div>
 
@@ -195,8 +195,8 @@ export const SwapCard: React.FC<SwapCardProps> = ({
             <span className="font-mono tabular-nums">
               ≈ ${toUsdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className="text-emerald-600 font-semibold text-[11px]">
-              Optimal pool route
+            <span className="text-[#0088CC] font-mono tabular-nums font-bold text-[11px]">
+              Fee: 0.05 TON
             </span>
           </div>
         </div>
@@ -222,7 +222,7 @@ export const SwapCard: React.FC<SwapCardProps> = ({
             className="flex items-center gap-1 text-slate-500 hover:text-slate-800 font-semibold transition-colors cursor-pointer"
           >
             <Layers className="w-3.5 h-3.5 text-[#0088CC]" />
-            <span>Details</span>
+            <span>0.05 TON · Details</span>
             <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showRouteDetails ? 'rotate-180' : ''}`} />
           </button>
         </div>
@@ -241,6 +241,10 @@ export const SwapCard: React.FC<SwapCardProps> = ({
                   <span className="font-mono font-semibold text-slate-900">{fromToken.symbol} → {toToken.symbol}</span>
                 </div>
                 <div className="flex justify-between">
+                  <span className="text-slate-500">On-Chain Swap Cost</span>
+                  <span className="font-mono tabular-nums font-bold text-[#0088CC]">0.05 TON</span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-slate-500">Price Impact</span>
                   <span className="font-mono tabular-nums font-semibold text-emerald-600">&lt; 0.01%</span>
                 </div>
@@ -249,8 +253,8 @@ export const SwapCard: React.FC<SwapCardProps> = ({
                   <span className="font-mono tabular-nums font-semibold text-slate-900">{slippage}%</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Network Fee</span>
-                  <span className="font-mono tabular-nums font-semibold text-slate-700">~0.008 TON</span>
+                  <span className="text-slate-500">Daily Mission Cycle</span>
+                  <span className="font-mono tabular-nums font-semibold text-emerald-600">Renews Every 24h</span>
                 </div>
               </div>
             </motion.div>
@@ -265,7 +269,7 @@ export const SwapCard: React.FC<SwapCardProps> = ({
               onClick={() => handlePercentClick(25)}
               className="w-full min-h-[48px] py-3.5 rounded-2xl bg-slate-100 hover:bg-slate-200/80 text-slate-600 font-bold text-sm transition-colors cursor-pointer"
             >
-              Enter an amount to swap
+              Enter an amount to swap (0.05 TON)
             </button>
           ) : numFrom > userBalance ? (
             <button
@@ -280,7 +284,11 @@ export const SwapCard: React.FC<SwapCardProps> = ({
               className="w-full min-h-[48px] py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm tracking-tight shadow-md shadow-slate-900/10 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
               <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
-              <span>Swap {fromToken.symbol} for {toToken.symbol}</span>
+              <span>
+                {wallet.isConnected
+                  ? `Swap ${fromToken.symbol} for ${toToken.symbol} · 0.05 TON`
+                  : `Connect Wallet & Swap · 0.05 TON`}
+              </span>
             </button>
           )}
         </div>
@@ -288,7 +296,7 @@ export const SwapCard: React.FC<SwapCardProps> = ({
         {/* Quiet Security Footnote */}
         <div className="mt-3.5 flex items-center justify-center gap-1.5 text-[11px] text-slate-400 font-medium">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-          <span>Verified TON Smart Contract Execution · Qualifies for Airdrop</span>
+          <span>0.05 TON On-Chain Verification · Daily 24h Swap Missions</span>
         </div>
       </div>
     </div>

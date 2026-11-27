@@ -219,7 +219,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
     }
   ];
 
-  // One-Time DEX Swap Missions (each task can only be completed & claimed once)
+  // 24-Hour Recurring DEX Swap Missions (Each swap mission renews every 24 hours)
   const swapTasks = [
     { id: 'swap_grmf_gram', symbol: 'GRAM', label: 'Swap GRMF to GRAM', reward: 50, xp: 20 },
     { id: 'swap_grmf_usdt', symbol: 'USDT', label: 'Swap GRMF to USDT', reward: 50, xp: 20 },
@@ -235,22 +235,30 @@ export const TasksView: React.FC<TasksViewProps> = ({
       : typeof rawTask === 'string' 
         ? rawTask 
         : undefined;
+    const claimedAt = typeof rawTask === 'object' && rawTask !== null
+      ? (rawTask.claimedAt || rawTask.completedAt)
+      : 0;
+    const cooldown = getCooldownState(claimedAt, now);
 
-    if (status === 'claimed') {
-      return { ...task, taskState: 'claimed' as const };
-    }
     if (status === 'completed') {
-      return { ...task, taskState: 'ready_to_claim' as const };
+      return { ...task, taskState: 'ready_to_claim' as const, cooldown };
     }
-    return { ...task, taskState: 'available' as const };
+    if (status === 'claimed' && cooldown.isCooldown) {
+      return { ...task, taskState: 'cooldown' as const, cooldown };
+    }
+    return { ...task, taskState: 'available' as const, cooldown };
   });
 
-  // Compute aggregate 24h cycle metrics for the 3 recurring daily features (Check-In, Mystery Box, Free Spin)
-  const totalDailyCount = 3;
+  // Compute aggregate 24h cycle metrics for all recurring 24h daily features (Check-In, Mystery Box, Free Spin + 5 Daily Swaps)
+  const totalDailyCount = 3 + swapTasks.length;
+  const swapCooldownMsList = evaluatedSwapTasks
+    .filter((t) => t.taskState === 'cooldown')
+    .map((t) => t.cooldown.remainingMs);
   const activeCooldowns = [
     ...(loginCooldown.isCooldown ? [loginCooldown.remainingMs] : []),
     ...(boxCooldown.isCooldown ? [boxCooldown.remainingMs] : []),
-    ...(spinCooldown.isCooldown ? [spinCooldown.remainingMs] : [])
+    ...(spinCooldown.isCooldown ? [spinCooldown.remainingMs] : []),
+    ...swapCooldownMsList
   ];
   const completedDailyCount = activeCooldowns.length;
   const availableDailyCount = totalDailyCount - completedDailyCount;
@@ -375,9 +383,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
   };
 
   const handleClaimSwapTask = async (taskId: string, reward: number, xp: number) => {
-    // Prevent claiming more than once
-    const currentStatus = taskProgress?.[taskId]?.status;
-    if (currentStatus === 'claimed') return;
+    const rawEntry = taskProgress?.[taskId];
+    const currentStatus = rawEntry?.status;
+    const cooldown = getCooldownState(rawEntry?.claimedAt || rawEntry?.completedAt, Date.now());
+    if (currentStatus === 'claimed' && cooldown.isCooldown) return;
 
     const claimTs = Date.now();
     await handleClaimTask(
@@ -389,7 +398,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
         [`taskProgress.${taskId}.status`]: 'claimed',
         [`taskProgress.${taskId}.claimedAt`]: claimTs
       },
-      'One-time DEX Swap Mission permanently completed!'
+      'Daily DEX Swap Mission claimed! Renews in 24:00:00.'
     );
   };
 
@@ -588,7 +597,7 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
               <div className="text-right shrink-0">
                 <span className="text-[10px] font-semibold text-slate-400 block">Daily Pool</span>
-                <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+135 GRMF/24h</span>
+                <span className="text-xs font-extrabold font-mono tabular-nums text-emerald-600">+385 GRMF/24h</span>
               </div>
             </div>
           </div>
@@ -888,9 +897,9 @@ export const TasksView: React.FC<TasksViewProps> = ({
           );
         })}
 
-        {/* One-Time DEX Swap Missions (Each completable once only) */}
-        {(activeTab === 'all' || activeTab === 'special') && evaluatedSwapTasks.map((task) => {
-          const isClaimed = task.taskState === 'claimed';
+        {/* 24-Hour Recurring DEX Swap Missions (0.05 TON per Swap, Renews every 24h) */}
+        {(activeTab === 'all' || activeTab === 'daily' || activeTab === 'special') && evaluatedSwapTasks.map((task) => {
+          const isCooldown = task.taskState === 'cooldown';
           const isReadyToClaim = task.taskState === 'ready_to_claim';
 
           return (
@@ -899,27 +908,47 @@ export const TasksView: React.FC<TasksViewProps> = ({
                 <Coins className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-bold text-slate-900 truncate">
-                  {task.label}
-                </h4>
+                <div className="flex items-center gap-1.5">
+                  <h4 className="text-sm font-bold text-slate-900 truncate">
+                    {task.label}
+                  </h4>
+                  <span className="text-[10px] font-mono tabular-nums font-bold text-[#0088CC]">
+                    · 24h
+                  </span>
+                </div>
                 <p className="text-xs text-slate-500 font-medium mt-0.5 truncate">
                   <span className="font-mono tabular-nums font-bold text-emerald-600">+{task.reward} GRMF</span>
                   <span className="mx-1.5 text-slate-300">·</span>
-                  {isClaimed ? (
-                    <span>Completed</span>
+                  {isCooldown ? (
+                    <span className="font-mono tabular-nums text-slate-600 font-semibold">
+                      Renews in {task.cooldown.formatted}
+                    </span>
                   ) : isReadyToClaim ? (
                     <span className="text-emerald-600 font-semibold">Swap verified — Ready to claim</span>
                   ) : (
-                    <span>One-time DEX mission</span>
+                    <span>Daily 24h DEX mission</span>
                   )}
                 </p>
+                {isCooldown && (
+                  <div className="w-full max-w-[160px] h-1 bg-slate-100 rounded-full overflow-hidden mt-1.5">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                      style={{ width: `${task.cooldown.progressPct}%` }}
+                    />
+                  </div>
+                )}
               </div>
               <div className="shrink-0">
-                {isClaimed ? (
-                  <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-bold px-2.5 py-1.5">
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Claimed</span>
-                  </span>
+                {isCooldown ? (
+                  <div className="flex flex-col items-end">
+                    <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-bold">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Claimed</span>
+                    </span>
+                    <span className="text-[11px] font-mono tabular-nums text-slate-400 font-semibold mt-0.5">
+                      {task.cooldown.formatted}
+                    </span>
+                  </div>
                 ) : isReadyToClaim ? (
                   <button
                     onClick={() => handleClaimSwapTask(task.id, task.reward, task.xp)}
