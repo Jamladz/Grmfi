@@ -235,18 +235,26 @@ export const TasksView: React.FC<TasksViewProps> = ({
       : typeof rawTask === 'string' 
         ? rawTask 
         : undefined;
-    const claimedAt = typeof rawTask === 'object' && rawTask !== null
-      ? (rawTask.claimedAt || rawTask.completedAt)
+    const completedAt = typeof rawTask === 'object' && rawTask !== null
+      ? sanitizeTimestamp(rawTask.completedAt, now)
       : 0;
-    const cooldown = getCooldownState(claimedAt, now);
+    const claimedAt = typeof rawTask === 'object' && rawTask !== null
+      ? sanitizeTimestamp(rawTask.claimedAt, now)
+      : 0;
 
-    if (status === 'completed') {
-      return { ...task, taskState: 'ready_to_claim' as const, cooldown };
+    // 1. After claiming, enforce the 24-hour countdown timer until the user can perform the task again
+    const claimCooldown = getCooldownState(claimedAt, now);
+    if (claimedAt > 0 && claimCooldown.isCooldown && claimedAt >= completedAt) {
+      return { ...task, taskState: 'cooldown' as const, cooldown: claimCooldown };
     }
-    if (status === 'claimed' && cooldown.isCooldown) {
-      return { ...task, taskState: 'cooldown' as const, cooldown };
+
+    // 2. When swap is completed and not yet claimed for this cycle, allow claiming (+50 GRMF)
+    if (status === 'completed' && completedAt > claimedAt) {
+      return { ...task, taskState: 'ready_to_claim' as const, cooldown: claimCooldown };
     }
-    return { ...task, taskState: 'available' as const, cooldown };
+
+    // 3. Available to swap (either never completed or 24-hour countdown after claiming has finished)
+    return { ...task, taskState: 'available' as const, cooldown: claimCooldown };
   });
 
   // Compute aggregate 24h cycle metrics for all recurring 24h daily features (Check-In, Mystery Box, Free Spin + 5 Daily Swaps)
@@ -384,9 +392,11 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
   const handleClaimSwapTask = async (taskId: string, reward: number, xp: number) => {
     const rawEntry = taskProgress?.[taskId];
-    const currentStatus = rawEntry?.status;
-    const cooldown = getCooldownState(rawEntry?.claimedAt || rawEntry?.completedAt, Date.now());
-    if (currentStatus === 'claimed' && cooldown.isCooldown) return;
+    const nowMs = Date.now();
+    const claimedAt = sanitizeTimestamp(rawEntry?.claimedAt, nowMs);
+    const completedAt = sanitizeTimestamp(rawEntry?.completedAt, nowMs);
+    const cooldown = getCooldownState(claimedAt, nowMs);
+    if (claimedAt > 0 && cooldown.isCooldown && claimedAt >= completedAt) return;
 
     const claimTs = Date.now();
     await handleClaimTask(
@@ -396,9 +406,10 @@ export const TasksView: React.FC<TasksViewProps> = ({
       `task_${taskId}`,
       {
         [`taskProgress.${taskId}.status`]: 'claimed',
-        [`taskProgress.${taskId}.claimedAt`]: claimTs
+        [`taskProgress.${taskId}.claimedAt`]: claimTs,
+        [`taskProgress.${taskId}.completedAt`]: claimTs
       },
-      'Daily DEX Swap Mission claimed! Renews in 24:00:00.'
+      'Daily DEX Swap Mission claimed! Next swap mission unlocks in 24:00:00.'
     );
   };
 

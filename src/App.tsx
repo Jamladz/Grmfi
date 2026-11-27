@@ -141,6 +141,15 @@ function normalizeAndSanitizeUserData(rawData: any) {
         if (typeof entry.claimedAt === 'number') {
           entry.claimedAt = sanitizeTaskTimestamp(entry.claimedAt, now);
         }
+        if (taskId.startsWith('swap_grmf_')) {
+          const cAt = Number(entry.completedAt) || 0;
+          const clAt = Number(entry.claimedAt) || 0;
+          if (clAt > 0 && clAt >= cAt) {
+            entry.status = 'claimed';
+          } else if (cAt > clAt) {
+            entry.status = 'completed';
+          }
+        }
       }
     });
   }
@@ -812,16 +821,21 @@ function App() {
       const nowTs = Date.now();
 
       // 24-Hour Recurring Swap Mission evaluation:
-      // Allows completing again once 24 hours have passed since the last claim
+      // 1. Cannot re-complete while the 24-hour post-claim countdown is active.
+      // 2. Cannot re-complete if already completed and waiting for user to click Claim.
+      // 3. Unlocks for a new completion once 24 hours have passed since claimedAt.
       const canCompleteSwapTask = (progressMap: any, id: string | null) => {
         if (!id) return false;
         const entry = progressMap?.[id];
-        if (!entry) return true;
-        const status = typeof entry === 'object' ? entry.status : entry;
-        if (status === 'completed') return false; // Already ready to claim
-        if (status === 'claimed') {
-          const lastClaimTs = sanitizeTaskTimestamp(entry?.claimedAt || entry?.completedAt, nowTs);
-          return !lastClaimTs || (nowTs - lastClaimTs >= DAILY_TASK_COOLDOWN_MS);
+        if (!entry || typeof entry !== 'object') return true;
+        const completedAt = sanitizeTaskTimestamp(entry.completedAt, nowTs);
+        const claimedAt = sanitizeTaskTimestamp(entry.claimedAt, nowTs);
+
+        if (claimedAt > 0 && (nowTs - claimedAt < DAILY_TASK_COOLDOWN_MS) && claimedAt >= completedAt) {
+          return false;
+        }
+        if (entry.status === 'completed' && completedAt > claimedAt) {
+          return false;
         }
         return true;
       };
